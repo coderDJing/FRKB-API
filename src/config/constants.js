@@ -1,0 +1,90 @@
+/**
+ * 系统常量配置
+ */
+
+module.exports = {
+  // 批处理配置
+  BATCH_CONFIG: {
+    BATCH_SIZE: parseInt(process.env.BATCH_SIZE || '1000'),
+    MAX_CONCURRENT: parseInt(process.env.MAX_CONCURRENT_BATCHES || '2'),
+    TIMEOUT_PER_BATCH: parseInt(process.env.TIMEOUT_PER_BATCH || '30000'),
+    RETRY_TIMES: parseInt(process.env.RETRY_TIMES || '3')
+  },
+
+  // 布隆过滤器配置
+  BLOOM_FILTER: {
+    ENABLED: process.env.BLOOM_FILTER_ENABLED === 'true',
+    SIZE: parseInt(process.env.BLOOM_FILTER_SIZE || '1000000'),
+    HASH_FUNCTIONS: parseInt(process.env.BLOOM_FILTER_HASH_FUNCTIONS || '10'),
+    FALSE_POSITIVE_RATE: 0.01 // 1%误报率
+  },
+
+  // 缓存配置
+  CACHE_CONFIG: {
+    ENABLED: process.env.CACHE_ENABLED === 'true',
+    TTL: parseInt(process.env.CACHE_TTL || '3600'), // 1小时
+    MAX_SIZE: parseInt(process.env.CACHE_MAX_SIZE || '10000')
+  },
+
+  // API响应状态码
+  HTTP_STATUS: {
+    OK: 200,
+    CREATED: 201,
+    BAD_REQUEST: 400,
+    UNAUTHORIZED: 401,
+    FORBIDDEN: 403,
+    NOT_FOUND: 404,
+    CONFLICT: 409,
+    RATE_LIMITED: 429,
+    INTERNAL_ERROR: 500
+  },
+
+  // API错误码
+  ERROR_CODES: {
+    INVALID_USER_KEY: 'INVALID_USER_KEY',
+    USER_KEY_NOT_FOUND: 'USER_KEY_NOT_FOUND',
+    INVALID_API_KEY: 'INVALID_API_KEY',
+    INVALID_MD5_FORMAT: 'INVALID_MD5_FORMAT',
+    BATCH_SIZE_EXCEEDED: 'BATCH_SIZE_EXCEEDED',
+    SYNC_IN_PROGRESS: 'SYNC_IN_PROGRESS',
+    DATABASE_ERROR: 'DATABASE_ERROR',
+    RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED'
+  },
+
+  // MD5格式验证
+  MD5_REGEX: /^[a-f0-9]{32}$/i,
+
+  // userKey格式验证 (UUID v4)
+  USER_KEY_REGEX: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+
+  // 请求限制配置
+  RATE_LIMIT: {
+    MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX || '100'),
+    WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15分钟
+    HEADERS: true,
+    MESSAGE: '请求过于频繁，请稍后再试'
+  },
+
+  // 数据库集合名称
+  COLLECTIONS: {
+    USER_MD5: 'user_md5_collections',
+    USER_META: 'user_collection_metas',
+    AUTH_KEYS: 'authorized_user_keys'
+  },
+
+  // 性能监控配置
+  PERFORMANCE: {
+    LOG_SLOW_QUERIES: true,
+    SLOW_QUERY_THRESHOLD: 1000, // 1秒
+    MEMORY_USAGE_WARNING: 100 * 1024 * 1024, // 100MB
+    ENABLE_PROFILING: process.env.NODE_ENV === 'development'
+  },
+
+  // 同步算法配置
+  SYNC_CONFIG: {
+    HASH_ALGORITHM: 'sha256',
+    DIFF_SESSION_TTL: 300, // 5分钟
+    MAX_DIFF_PAGES: 100,
+    DEFAULT_PAGE_SIZE: 1000
+  }
+};
