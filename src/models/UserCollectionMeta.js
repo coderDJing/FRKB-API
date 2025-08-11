@@ -32,7 +32,8 @@ const userCollectionMetaSchema = new mongoose.Schema({
   // 集合哈希值 (用于快速比较是否相同)
   collectionHash: {
     type: String,
-    required: true,
+    // 允许首次创建时为空字符串，避免为计算初始哈希做全量扫描
+    required: false,
     default: '',
     index: true
   },
@@ -161,8 +162,8 @@ userCollectionMetaSchema.methods.updateStats = async function(syncResult = {}) {
   }
 };
 
-// 静态方法：获取或创建用户元数据
-userCollectionMetaSchema.statics.getOrCreate = async function(userKey) {
+  // 静态方法：获取或创建用户元数据
+  userCollectionMetaSchema.statics.getOrCreate = async function(userKey) {
   try {
     let meta = await this.findOne({ userKey });
     
@@ -170,16 +171,14 @@ userCollectionMetaSchema.statics.getOrCreate = async function(userKey) {
       // 创建新的元数据记录（快速路径）：
       // 按业务约定，若不存在元数据则视为该用户当前无有效MD5数据，
       // 首次创建时不进行全量扫描与哈希计算，避免首个 /check 卡顿。
-      meta = new this({
-        userKey,
-        totalCount: 0,
-        collectionHash: '',
-        // 首次初始化不认为发生过同步
-        lastSyncAt: null,
-        lastUpdateAt: new Date()
-      });
-      
-      await meta.save();
+        meta = await this.create({
+          userKey,
+          totalCount: 0,
+          collectionHash: '',
+          // 首次初始化不认为发生过同步
+          lastSyncAt: null,
+          lastUpdateAt: new Date()
+        });
     }
     
     return meta;

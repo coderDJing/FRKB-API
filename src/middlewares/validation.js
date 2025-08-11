@@ -17,6 +17,7 @@ const handleValidationErrors = (req, res, next) => {
       value: error.value,
       location: error.location
     }));
+    // （移除调试打印，仅保留结构化日志）
     
     logger.warn('请求验证失败', {
       url: req.originalUrl,

@@ -76,7 +76,7 @@ pnpm start
 node cli/admin.js create-userkey --desc "张三的客户端"
 
 # 查看所有userKey
-node cli/admin.js list-userkeys
+node cli/admin.js list-userkeys --full
 
 # 查看帮助
 node cli/admin.js --help

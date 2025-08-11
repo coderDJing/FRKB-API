@@ -103,6 +103,8 @@ const apiPrefix = process.env.API_PREFIX || '/frkbapi/v1';
 const apiRoutes = require('./routes');
 app.use(apiPrefix, apiRoutes);
 
+// （移除调试启动打印）
+
 // 404处理 - 必须在所有路由之后
 app.use('*', notFoundHandler);
 

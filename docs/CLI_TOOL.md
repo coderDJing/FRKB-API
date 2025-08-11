@@ -15,6 +15,7 @@ node cli/admin.js create-userkey --desc "只读账号" --no-sync --daily-limit 1
 node cli/admin.js list-userkeys
 node cli/admin.js list --active
 node cli/admin.js list --limit 10
+node cli/admin.js list --full        # 在列表中显示完整 userKey（谨慎在共享环境使用）
 ```
 
 - 查看/管理单个 userKey

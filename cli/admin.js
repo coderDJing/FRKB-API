@@ -145,18 +145,19 @@ async function listUserKeys(options) {
   console.log(`\n📊 找到 ${userKeys.length} 个userKey:\n`);
   
   // 表格标题
-  console.log('ID'.padEnd(12) + 'Active'.padEnd(8) + 'Description'.padEnd(30) + 'Last Used'.padEnd(20) + 'Requests'.padEnd(10));
+  const keyColumnWidth = options.full ? 37 : 12; // 36位UUID，额外1位用于间距
+  console.log('Key'.padEnd(keyColumnWidth) + 'Active'.padEnd(8) + 'Description'.padEnd(30) + 'Last Used'.padEnd(20) + 'Requests'.padEnd(10));
   console.log('-'.repeat(100));
   
   for (const userKey of userKeys) {
-    const shortId = UserKeyUtils.toShortId(userKey.userKey);
+    const displayKey = options.full ? userKey.userKey : UserKeyUtils.toShortId(userKey.userKey);
     const isActive = userKey.isActive ? '✅' : '❌';
     const description = (userKey.description || 'N/A').substring(0, 28).padEnd(30);
     const lastUsed = userKey.lastUsedAt 
       ? userKey.lastUsedAt.toISOString().substring(0, 16).replace('T', ' ')
       : 'Never'.padEnd(16);
     const requests = userKey.usageStats.totalRequests.toString().padEnd(10);
-    console.log(`${shortId.padEnd(12)}${isActive.padEnd(8)}${description}${lastUsed.padEnd(20)}${requests}`);
+    console.log(`${displayKey.padEnd(keyColumnWidth)}${isActive.padEnd(8)}${description}${lastUsed.padEnd(20)}${requests}`);
   }
   
   console.log('');
@@ -540,6 +541,7 @@ program
   .option('-a, --active', '只显示活跃的userKey')
   .option('--inactive', '只显示非活跃的userKey')
   .option('-l, --limit <number>', '限制显示数量', '50')
+  .option('--full', '显示完整 userKey（谨慎在共享环境使用）')
   .action(withErrorHandling((options) => {
     // 处理互斥选项
     if (options.active) options.active = true;

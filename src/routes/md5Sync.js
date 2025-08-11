@@ -24,6 +24,8 @@ const router = express.Router();
 // 应用全局中间件
 router.use(validateRequestSize); // 请求体大小验证
 
+// （已移除调试日志）
+
 /**
  * 同步预检查接口
  * POST /frkbapi/v1/md5-sync/check
@@ -32,7 +34,7 @@ router.use(validateRequestSize); // 请求体大小验证
 router.post('/check', 
   relaxedRateLimit,           // 宽松限流（查询类操作）
   syncAuth,                   // 同步认证（API密钥 + userKey + 同步权限）
-  validateSyncCheck,          // 验证请求参数
+  ...validateSyncCheck(),     // 验证请求参数
   Md5SyncController.checkSyncRequired
 );
 
@@ -44,8 +46,8 @@ router.post('/check',
 router.post('/bidirectional-diff',
   syncRateLimit,              // 同步限流
   syncAuth,                   // 同步认证
-  validateBidirectionalDiff,  // 验证请求参数
-  validateMd5ArrayContent,    // 验证MD5数组内容
+  ...validateBidirectionalDiff(),  // 验证请求参数
+  validateMd5ArrayContent,         // 验证MD5数组内容
   Md5SyncController.bidirectionalDiff
 );
 
@@ -57,7 +59,7 @@ router.post('/bidirectional-diff',
 router.post('/add',
   syncRateLimit,              // 同步限流
   syncAuth,                   // 同步认证
-  validateBatchAdd,           // 验证请求参数
+  ...validateBatchAdd(),      // 验证请求参数
   validateMd5ArrayContent,    // 验证MD5数组内容
   Md5SyncController.batchAdd
 );
@@ -70,7 +72,7 @@ router.post('/add',
 router.post('/pull-diff-page',
   syncRateLimit,              // 同步限流
   syncAuth,                   // 同步认证
-  validatePullDiffPage,       // 验证请求参数
+  ...validatePullDiffPage(),  // 验证请求参数
   Md5SyncController.pullDiffPage
 );
 
@@ -82,7 +84,7 @@ router.post('/pull-diff-page',
 router.post('/analyze-diff',
   strictRateLimit,            // 严格限流（操作较重）
   syncAuth,                   // 同步认证
-  validateDiffAnalysis,       // 验证请求参数
+  ...validateDiffAnalysis(),  // 验证请求参数
   validateMd5ArrayContent,    // 验证MD5数组内容
   Md5SyncController.analyzeDifference
 );
