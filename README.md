@@ -145,8 +145,6 @@ await fetch('/frkbapi/v1/md5-sync/check', {
 - [同步算法](./docs/SYNC_ALGORITHM.md) - 同步流程与要点
 
 ## 开发团队
-
-- **设计架构**：Claude Sonnet 4 + 用户需求
 - **技术选型**：Node.js生态系统
 - **性能优化**：布隆过滤器 + 批处理算法
 
