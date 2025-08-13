@@ -9,7 +9,20 @@ if (!fs.existsSync(logDir)) {
   fs.mkdirSync(logDir, { recursive: true });
 }
 
-// 日志格式配置
+// 日志配置
+const LOG_CONFIG = {
+  // 日志轮转配置
+  maxSize: process.env.LOG_MAX_SIZE || '5m',       // 减小单文件大小
+  appLogRetention: process.env.LOG_APP_RETENTION || '3d',   // 应用日志保留3天
+  errorLogRetention: process.env.LOG_ERROR_RETENTION || '7d', // 错误日志保留7天
+  
+  // 精简模式控制
+  minimal: process.env.LOG_MINIMAL === 'true',      // 最小日志模式
+  skipHealthChecks: process.env.LOG_SKIP_HEALTH !== 'false',  // 跳过健康检查日志
+  skipSuccessfulAuth: process.env.LOG_SKIP_AUTH_SUCCESS !== 'false', // 跳过成功认证日志
+};
+
+// 精简的日志格式配置
 const logFormat = winston.format.combine(
   winston.format.timestamp({
     format: 'YYYY-MM-DD HH:mm:ss'
@@ -23,17 +36,27 @@ const logFormat = winston.format.combine(
       log += `\n${stack}`;
     }
     
-    // 添加额外的元数据
-    const metaKeys = Object.keys(meta);
-    if (metaKeys.length > 0) {
-      log += `\n  元数据: ${JSON.stringify(meta, null, 2)}`;
+    // 只在非精简模式下添加关键元数据
+    if (!LOG_CONFIG.minimal && Object.keys(meta).length > 0) {
+      // 过滤掉不重要的字段
+      const filteredMeta = Object.fromEntries(
+        Object.entries(meta).filter(([key, value]) => {
+          // 排除默认服务信息和过于详细的字段
+          return !['service', 'version', 'userAgent', 'ip'].includes(key) && 
+                 value !== undefined && value !== null;
+        })
+      );
+      
+      if (Object.keys(filteredMeta).length > 0) {
+        log += ` | ${JSON.stringify(filteredMeta)}`;
+      }
     }
     
     return log;
   })
 );
 
-// 控制台格式（带颜色）
+// 精简的控制台格式
 const consoleFormat = winston.format.combine(
   winston.format.colorize({ all: true }),
   winston.format.timestamp({
@@ -46,13 +69,6 @@ const consoleFormat = winston.format.combine(
       log += `\n${stack}`;
     }
     
-    // 控制台也输出关键信息，便于快速诊断
-    const metaKeys = Object.keys(meta);
-    if (metaKeys.length > 0) {
-      // 控制台打印精简版元数据
-      log += `\n  meta: ${JSON.stringify(meta, null, 2)}`;
-    }
-    
     return log;
   })
 );
@@ -61,175 +77,171 @@ const consoleFormat = winston.format.combine(
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: logFormat,
+  // 精简的默认元数据
   defaultMeta: { 
-    service: 'frkb-api',
-    version: process.env.npm_package_version || '1.0.0'
+    service: 'frkb-api'
   },
   transports: [
-    // 应用日志 - 按日期轮转
+    // 应用日志 - 使用优化的轮转配置
     new DailyRotateFile({
       filename: path.join(logDir, 'app-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
       zippedArchive: true,
-      maxSize: process.env.LOG_MAX_SIZE || '10m',
-      maxFiles: process.env.LOG_MAX_FILES || '14d',
+      maxSize: LOG_CONFIG.maxSize,
+      maxFiles: LOG_CONFIG.appLogRetention,
       level: 'info'
     }),
 
-    // 错误日志 - 只记录错误级别
+    // 错误日志 - 缩短保留时间
     new DailyRotateFile({
       filename: path.join(logDir, 'error-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
       zippedArchive: true,
-      maxSize: process.env.LOG_MAX_SIZE || '10m',
-      maxFiles: process.env.LOG_MAX_FILES || '30d',
+      maxSize: LOG_CONFIG.maxSize,
+      maxFiles: LOG_CONFIG.errorLogRetention,
       level: 'error'
     }),
 
-    // 控制台输出
+    // 控制台输出 - 生产环境只输出警告以上级别
     new winston.transports.Console({
       format: consoleFormat,
-      level: process.env.NODE_ENV === 'development' ? 'debug' : 'info'
+      level: process.env.NODE_ENV === 'development' ? 'debug' : 'warn'
     })
   ],
 
-  // 未捕获异常处理
+  // 异常处理 - 缩短保留时间
   exceptionHandlers: [
     new DailyRotateFile({
       filename: path.join(logDir, 'exceptions-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
       zippedArchive: true,
-      maxSize: '10m',
-      maxFiles: '30d'
+      maxSize: LOG_CONFIG.maxSize,
+      maxFiles: '7d'  // 异常日志保留7天即可
     })
   ],
 
-  // 未处理的Promise拒绝
+  // Promise拒绝处理 - 缩短保留时间
   rejectionHandlers: [
     new DailyRotateFile({
       filename: path.join(logDir, 'rejections-%DATE%.log'),
       datePattern: 'YYYY-MM-DD',
       zippedArchive: true,
-      maxSize: '10m',
-      maxFiles: '30d'
+      maxSize: LOG_CONFIG.maxSize,
+      maxFiles: '7d'  // Promise拒绝日志保留7天即可
     })
   ],
 
-  // 异常后不退出进程
   exitOnError: false
 });
 
-// 生产环境不输出debug级别到控制台
-if (process.env.NODE_ENV === 'production') {
-  logger.remove(winston.transports.Console);
-  logger.add(new winston.transports.Console({
-    format: consoleFormat,
-    level: 'warn'
-  }));
-}
+// 精简的扩展方法 - 只保留关键功能
 
-// 扩展方法：记录API请求
+// API请求日志 - 简化版本
 logger.apiRequest = (req, res, duration) => {
-  const { method, originalUrl, ip, headers } = req;
+  const { method, originalUrl } = req;
   const { statusCode } = res;
   
+  // 跳过健康检查日志
+  if (LOG_CONFIG.skipHealthChecks && originalUrl === '/health') {
+    return;
+  }
+  
+  // 只记录关键信息
   const logData = {
     method,
     url: originalUrl,
-    statusCode,
-    ip,
-    userAgent: headers['user-agent'],
+    status: statusCode,
     duration: `${duration}ms`,
-    userKey: req.userKey || 'unknown',
-    requestId: req.id || undefined,
-    contentLength: res.get && res.get('content-length') || undefined
+    userKey: req.userKey || 'anonymous'
   };
   
-  if (statusCode >= 400) {
-    logger.error('API请求错误', logData);
+  if (statusCode >= 500) {
+    logger.error('服务器错误', logData);
+  } else if (statusCode >= 400) {
+    logger.warn('客户端错误', logData);
   } else if (statusCode >= 300) {
-    logger.warn('API请求重定向', logData);
-  } else {
-    logger.info('API请求成功', logData);
+    logger.info('重定向', logData);
+  } else if (!LOG_CONFIG.minimal) {
+    // 正常请求在精简模式下不记录
+    logger.info('请求成功', logData);
   }
 };
 
-// 扩展方法：记录数据库操作
-logger.dbOperation = (operation, collection, data = {}) => {
-  logger.info('数据库操作', {
-    operation,
-    collection,
-    ...data
-  });
+// 性能监控 - 只记录慢请求
+logger.performance = (operation, duration, critical = false) => {
+  const slowThreshold = 3000; // 3秒阈值
+  
+  if (critical || duration > slowThreshold) {
+    const level = duration > slowThreshold * 2 ? 'error' : 'warn';
+    logger.log(level, `慢操作: ${operation}`, {
+      duration: `${duration}ms`,
+      threshold: `${slowThreshold}ms`
+    });
+  }
 };
 
-// 扩展方法：记录性能指标
-logger.performance = (operation, duration, details = {}) => {
-  const level = duration > 5000 ? 'warn' : 'info';
-  logger.log(level, '性能监控', {
-    operation,
-    duration: `${duration}ms`,
-    ...details
-  });
-};
-
-// 扩展方法：记录同步操作
-logger.sync = (userKey, operation, stats = {}) => {
-  logger.info('同步操作', {
-    userKey,
-    operation,
-    ...stats
-  });
-};
-
-// 扩展方法：记录安全事件
+// 安全事件 - 重要事件必须记录
 logger.security = (event, details = {}) => {
-  logger.warn('安全事件', {
-    event,
-    timestamp: new Date().toISOString(),
-    ...details
+  logger.warn(`安全: ${event}`, {
+    ...details,
+    timestamp: new Date().toISOString()
   });
 };
 
-// 扩展方法：记录管理员操作
-logger.admin = (operation, operator, details = {}) => {
-  logger.info('管理员操作', {
-    operation,
-    operator,
-    timestamp: new Date().toISOString(),
-    ...details
-  });
-};
-
-// 扩展方法：记录系统启动信息
-logger.startup = (message, config = {}) => {
-  logger.info(`🚀 ${message}`, {
-    environment: process.env.NODE_ENV,
-    nodeVersion: process.version,
-    pid: process.pid,
-    ...config
-  });
-};
-
-// 扩展方法：记录错误并返回用户友好的消息
+// 系统错误处理
 logger.errorAndRespond = (error, req, res, userMessage = '服务器内部错误') => {
   const errorInfo = {
     message: error.message,
-    stack: error.stack,
     url: req.originalUrl,
     method: req.method,
-    userKey: req.userKey,
-    ip: req.ip,
-    userAgent: req.headers['user-agent']
+    userKey: req.userKey || 'anonymous'
   };
   
-  logger.error('请求处理错误', errorInfo);
+  // 只在开发环境记录完整堆栈
+  if (process.env.NODE_ENV === 'development') {
+    errorInfo.stack = error.stack;
+  }
+  
+  logger.error('请求错误', errorInfo);
   
   return res.status(500).json({
     success: false,
     message: userMessage,
     error: process.env.NODE_ENV === 'development' ? error.message : undefined
   });
+};
+
+// 系统启动日志
+logger.startup = (message) => {
+  logger.info(`🚀 ${message}`, {
+    env: process.env.NODE_ENV,
+    pid: process.pid
+  });
+};
+
+// 同步操作日志 - 兼容原有接口但简化内容
+logger.sync = (userKey, operation, stats = {}) => {
+  // 只记录重要的同步操作，跳过过于频繁的操作
+  const importantOps = [
+    'sync_check_complete', 'bidirectional_diff_complete', 
+    'batch_add_complete', 'pull_diff_page_complete', 'analyze_diff_complete'
+  ];
+  
+  if (LOG_CONFIG.minimal && !importantOps.includes(operation)) {
+    return; // 精简模式下跳过不重要的同步日志
+  }
+  
+  const logData = {
+    userKey: userKey ? userKey.substring(0, 8) + '***' : 'unknown',
+    operation
+  };
+  
+  // 只包含关键统计信息
+  if (stats.needSync !== undefined) logData.needSync = stats.needSync;
+  if (stats.addedCount !== undefined) logData.addedCount = stats.addedCount;
+  if (stats.totalCount !== undefined) logData.totalCount = stats.totalCount;
+  
+  logger.info('同步操作', logData);
 };
 
 // 监听日志事件
@@ -239,13 +251,16 @@ logger.on('error', (error) => {
 
 // 优雅关闭处理
 process.on('SIGINT', () => {
-  logger.info('📴 收到SIGINT信号，正在关闭日志系统...');
+  logger.info('📴 服务正在关闭...');
   logger.end();
 });
 
 process.on('SIGTERM', () => {
-  logger.info('📴 收到SIGTERM信号，正在关闭日志系统...');
+  logger.info('📴 服务正在关闭...');
   logger.end();
 });
+
+// 导出配置供其他模块使用
+logger.config = LOG_CONFIG;
 
 module.exports = logger;

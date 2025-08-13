@@ -46,33 +46,14 @@ app.use(express.urlencoded({
 app.use(basicRateLimit);
 app.use(rateLimitMonitor);
 
-// 请求日志中间件
+// 精简的请求日志中间件
 app.use((req, res, next) => {
-  // 为请求添加唯一ID
-  req.id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
-  
-  // 记录请求开始
   const startTime = Date.now();
   
-  // 在响应结束时记录完整信息
+  // 在响应结束时使用精简的日志记录
   res.on('finish', () => {
     const duration = Date.now() - startTime;
-    
-    // 跳过健康检查的详细日志
-    if (req.path === '/health' && req.method === 'GET') {
-      return;
-    }
-    
-    logger.info('请求处理完成', {
-      requestId: req.id,
-      method: req.method,
-      url: req.originalUrl,
-      statusCode: res.statusCode,
-      duration: `${duration}ms`,
-      ip: req.ip,
-      userAgent: req.headers['user-agent'],
-      contentLength: res.get('content-length') || 0
-    });
+    logger.apiRequest(req, res, duration);
   });
   
   next();
