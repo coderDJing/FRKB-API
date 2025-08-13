@@ -23,53 +23,51 @@ class HashUtils {
   }
 
   /**
-   * 计算MD5数组的集合哈希
-   * @param {string[]} md5Array - MD5数组
-   * @returns {string} 集合哈希值
+   * 计算指纹数组的集合哈希（SHA256 指纹集合）
+   * @param {string[]} fingerprintArray - 指纹数组
+   * @returns {string} 集合哈希值（sha256）
    */
-  static calculateCollectionHash(md5Array) {
-    if (!Array.isArray(md5Array)) {
-      throw new Error('MD5数组参数无效');
+  static calculateCollectionHash(fingerprintArray) {
+    if (!Array.isArray(fingerprintArray)) {
+      throw new Error('指纹数组参数无效');
     }
 
-    if (md5Array.length === 0) {
+    if (fingerprintArray.length === 0) {
       return this.hash('');
     }
 
     // 排序以确保相同集合产生相同哈希
-    const sortedMd5s = [...md5Array]
-      .map(md5 => md5.toLowerCase())
+    const sortedFingerprints = [...fingerprintArray]
+      .map(fp => String(fp).toLowerCase())
       .sort();
 
-    // 连接所有MD5值
-    const concatenated = sortedMd5s.join('');
-    
+    const concatenated = sortedFingerprints.join('');
     return this.hash(concatenated);
   }
 
   /**
-   * 验证MD5格式是否正确
-   * @param {string} md5 - MD5字符串
-   * @returns {boolean} 是否为有效的MD5格式
+  * 验证指纹格式（SHA256）是否正确
+  * @param {string} fingerprint - 指纹字符串
+  * @returns {boolean} 是否为有效的指纹格式
    */
-  static isValidMd5(md5) {
-    if (typeof md5 !== 'string') {
-      return false;
-    }
-    
-    return /^[a-f0-9]{32}$/i.test(md5);
+  /**
+   * 验证指纹（64位十六进制 SHA256）
+   */
+  static isValidFingerprint(value) {
+    if (typeof value !== 'string') return false;
+    return /^[a-f0-9]{64}$/i.test(value);
   }
 
   /**
-   * 验证MD5数组
-   * @param {string[]} md5Array - MD5数组
+  * 验证指纹数组
+  * @param {string[]} fingerprintArray - 指纹数组
    * @returns {Object} 验证结果
    */
-  static validateMd5Array(md5Array) {
-    if (!Array.isArray(md5Array)) {
+  static validateFingerprintArray(fingerprintArray) {
+    if (!Array.isArray(fingerprintArray)) {
       return {
         valid: false,
-        error: 'MD5数组格式无效',
+        error: '指纹数组格式无效',
         invalidItems: []
       };
     }
@@ -77,14 +75,14 @@ class HashUtils {
     const invalidItems = [];
     const validItems = [];
 
-    md5Array.forEach((md5, index) => {
-      if (this.isValidMd5(md5)) {
-        validItems.push(md5.toLowerCase());
+    fingerprintArray.forEach((fp, index) => {
+      if (this.isValidFingerprint(fp)) {
+        validItems.push(fp.toLowerCase());
       } else {
         invalidItems.push({
           index,
-          value: md5,
-          reason: '不是有效的32位十六进制MD5值'
+          value: fp,
+          reason: '不是有效的指纹（64位十六进制 SHA256）'
         });
       }
     });
@@ -140,17 +138,7 @@ class HashUtils {
       .slice(0, length);
   }
 
-  /**
-   * 计算数据的MD5哈希
-   * @param {string} data - 要计算的数据
-   * @returns {string} MD5哈希值
-   */
-  static md5(data) {
-    return crypto
-      .createHash('md5')
-      .update(data, 'utf8')
-      .digest('hex');
-  }
+  
 
   /**
    * 计算数据的SHA1哈希
@@ -221,16 +209,16 @@ class HashUtils {
   }
 
   /**
-   * 对MD5数组进行去重和排序
-   * @param {string[]} md5Array - MD5数组
-   * @returns {string[]} 去重排序后的MD5数组
+  * 对指纹数组进行去重和排序
+  * @param {string[]} fingerprintArray - 指纹数组
+  * @returns {string[]} 去重排序后的指纹数组
    */
-  static deduplicateAndSort(md5Array) {
-    if (!Array.isArray(md5Array)) {
+  static deduplicateAndSort(fingerprintArray) {
+    if (!Array.isArray(fingerprintArray)) {
       return [];
     }
 
-    const uniqueSet = new Set(md5Array.map(md5 => md5.toLowerCase()));
+    const uniqueSet = new Set(fingerprintArray.map(fp => String(fp).toLowerCase()));
     return [...uniqueSet].sort();
   }
 

@@ -6,15 +6,80 @@ const HashUtils = require('../utils/hashUtils');
 const logger = require('../utils/logger');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { HTTP_STATUS } = require('../config/constants');
+const AuthorizedUserKey = require('../models/AuthorizedUserKey');
 
 /**
- * MD5同步控制器
- * 处理所有MD5集合同步相关的API请求
+ * 指纹同步控制器（64 位 SHA256）
  */
-class Md5SyncController {
+class FingerprintSyncController {
+  /**
+   * 仅校验 userKey 是否有效（不做数据同步或写入）
+   * POST /frkbapi/v1/fingerprint-sync/validate-user-key
+   */
+  static validateUserKey = asyncHandler(async (req, res) => {
+    const startTime = Date.now();
+    const { userKey } = req.body;
+    try {
+      logger.apiRequest(req, res, 0);
+
+      if (!userKey) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          error: 'INVALID_USER_KEY',
+          message: 'userKey参数不能为空'
+        });
+      }
+
+      const validation = UserKeyUtils.validate(userKey);
+      if (!validation.valid) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          error: 'INVALID_USER_KEY',
+          message: validation.error
+        });
+      }
+
+      const normalized = validation.normalized;
+      const authKey = await AuthorizedUserKey.findOne({ userKey: normalized }).lean();
+
+      if (!authKey) {
+        return res.status(404).json({
+          success: false,
+          error: 'USER_KEY_NOT_FOUND',
+          message: 'userKey未找到或未授权'
+        });
+      }
+
+      if (authKey.isActive === false) {
+        return res.status(HTTP_STATUS.FORBIDDEN).json({
+          success: false,
+          error: 'USER_KEY_INACTIVE',
+          message: 'userKey已被禁用'
+        });
+      }
+
+      // 计算当日剩余额度（不更新使用统计，保持只读校验）
+      // 仅进行只读可用性校验；不返回细粒度权限，也不涉及日配额
+      const duration = Date.now() - startTime;
+
+      return res.json({
+        success: true,
+        data: {
+          userKey: normalized,
+          isActive: !!authKey.isActive,
+          description: authKey.description || '',
+          lastUsedAt: authKey.lastUsedAt || null
+        },
+        performance: { validateDuration: duration },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      logger.errorAndRespond(error, req, res, 'userKey校验失败');
+    }
+  });
   /**
    * 同步预检查接口
-   * POST /frkbapi/v1/md5-sync/check
+   * POST /frkbapi/v1/fingerprint-sync/check
    */
   static checkSyncRequired = asyncHandler(async (req, res) => {
     const startTime = Date.now();
@@ -67,21 +132,21 @@ class Md5SyncController {
   });
 
   /**
-   * 双向差异检测接口
-   * POST /frkbapi/v1/md5-sync/bidirectional-diff
+   * 双向差异检测接口（指纹）
+   * POST /frkbapi/v1/fingerprint-sync/bidirectional-diff
    */
   static bidirectionalDiff = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, clientMd5s, batchIndex, batchSize } = req.body;
+    const { userKey, clientFingerprints, batchIndex, batchSize } = req.body;
     
     try {
       logger.apiRequest(req, res, 0);
       
       // 调用同步服务进行双向差异检测
       const diffResult = await syncService.bidirectionalDiff(
-        userKey, 
-        clientMd5s, 
-        batchIndex, 
+        userKey,
+        clientFingerprints,
+        batchIndex,
         batchSize
       );
       
@@ -91,21 +156,19 @@ class Md5SyncController {
       logger.performance('bidirectional_diff', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
         batchIndex,
-        clientMd5Count: clientMd5s.length,
-        serverMissing: diffResult.serverMissingMd5s.length,
-        serverExisting: diffResult.serverExistingMd5s.length
+        clientCount: clientFingerprints.length,
+        serverMissing: diffResult.serverMissingFingerprints.length,
+        serverExisting: diffResult.serverExistingFingerprints.length
       });
       
       res.json({
         success: true,
         batchIndex: diffResult.batchIndex,
         batchSize: diffResult.batchSize,
-        
-        // 服务端缺失的MD5（需要从客户端推送）
-        serverMissingMd5s: diffResult.serverMissingMd5s,
-        
-        // 服务端已存在的MD5
-        serverExistingMd5s: diffResult.serverExistingMd5s,
+        // 服务端缺失的指纹（需要从客户端推送）
+        serverMissingFingerprints: diffResult.serverMissingFingerprints,
+        // 服务端已存在的指纹
+        serverExistingFingerprints: diffResult.serverExistingFingerprints,
         
         // 统计信息
         counts: diffResult.counts,
@@ -136,25 +199,24 @@ class Md5SyncController {
   });
 
   /**
-   * 批量添加MD5接口
-   * POST /frkbapi/v1/md5-sync/add
+   * 批量添加指纹接口
+   * POST /frkbapi/v1/fingerprint-sync/add
    */
   static batchAdd = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, addMd5s } = req.body;
+    const { userKey, addFingerprints } = req.body;
     
     try {
       logger.apiRequest(req, res, 0);
       
-      // 调用同步服务批量添加MD5
-      const addResult = await syncService.batchAddMd5s(userKey, addMd5s);
+      const addResult = await syncService.batchAddFingerprints(userKey, addFingerprints);
       
       const duration = Date.now() - startTime;
       
       // 记录API性能
       logger.performance('batch_add', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
-        requestedCount: addMd5s.length,
+        requestedCount: addFingerprints.length,
         addedCount: addResult.addedCount,
         duplicateCount: addResult.duplicateCount
       });
@@ -163,7 +225,7 @@ class Md5SyncController {
       logger.sync(userKey, 'batch_add_complete', {
         added: addResult.addedCount,
         duplicates: addResult.duplicateCount,
-        total: addMd5s.length,
+        total: addFingerprints.length,
         duration: `${duration}ms`
       });
       
@@ -172,15 +234,12 @@ class Md5SyncController {
         addedCount: addResult.addedCount,
         duplicateCount: addResult.duplicateCount,
         totalRequested: addResult.totalRequested,
-        
-        // 操作统计
         batchResult: {
           addedCount: addResult.addedCount,
           duplicateCount: addResult.duplicateCount,
           skippedCount: 0,
           errorCount: 0
         },
-        
         performance: {
           addDuration: duration,
           ...addResult.performance
@@ -190,19 +249,19 @@ class Md5SyncController {
       
     } catch (error) {
       const duration = Date.now() - startTime;
-      logger.errorAndRespond(error, req, res, '批量添加MD5失败');
+      logger.errorAndRespond(error, req, res, '批量添加指纹失败');
       
       logger.performance('batch_add_error', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
-        requestedCount: addMd5s?.length || 0,
+        requestedCount: addFingerprints?.length || 0,
         error: error.message
       });
     }
   });
 
   /**
-   * 分页拉取差异数据接口
-   * POST /frkbapi/v1/md5-sync/pull-diff-page
+   * 分页拉取差异数据接口（指纹）
+   * POST /frkbapi/v1/fingerprint-sync/pull-diff-page
    */
   static pullDiffPage = asyncHandler(async (req, res) => {
     const startTime = Date.now();
@@ -211,24 +270,22 @@ class Md5SyncController {
     try {
       logger.apiRequest(req, res, 0);
       
-      // 调用同步服务分页拉取差异数据
       const pullResult = await syncService.pullDiffPage(userKey, diffSessionId, pageIndex);
       
       const duration = Date.now() - startTime;
       
-      // 记录API性能
       logger.performance('pull_diff_page', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
         sessionId: diffSessionId.substring(0, 16) + '...',
         pageIndex,
-        returnedCount: pullResult.missingMd5s.length,
+        returnedCount: pullResult.missingFingerprints.length,
         hasMore: pullResult.pageInfo.hasMore
       });
       
       res.json({
         success: true,
         sessionId: pullResult.sessionId,
-        missingMd5s: pullResult.missingMd5s,
+        missingFingerprints: pullResult.missingFingerprints,
         pageInfo: pullResult.pageInfo,
         performance: {
           pullDuration: duration,
@@ -251,25 +308,23 @@ class Md5SyncController {
   });
 
   /**
-   * 完整差异分析接口（兼容旧版本）
-   * POST /frkbapi/v1/md5-sync/analyze-diff
+   * 完整差异分析接口（指纹）
+   * POST /frkbapi/v1/fingerprint-sync/analyze-diff
    */
   static analyzeDifference = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, clientMd5s } = req.body;
+    const { userKey, clientFingerprints } = req.body;
     
     try {
       logger.apiRequest(req, res, 0);
       
-      // 调用同步服务进行完整差异分析
-      const analysisResult = await syncService.analyzeDifference(userKey, clientMd5s);
+      const analysisResult = await syncService.analyzeDifference(userKey, clientFingerprints);
       
       const duration = Date.now() - startTime;
       
-      // 记录API性能
       logger.performance('analyze_difference', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
-        clientMd5Count: clientMd5s.length,
+        clientCount: clientFingerprints.length,
         clientMissing: analysisResult.diffStats.clientMissingCount,
         serverMissing: analysisResult.diffStats.serverMissingCount
       });
@@ -293,7 +348,7 @@ class Md5SyncController {
       
       logger.performance('analyze_difference_error', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
-        clientMd5Count: clientMd5s?.length || 0,
+        clientCount: clientFingerprints?.length || 0,
         error: error.message
       });
     }
@@ -301,7 +356,7 @@ class Md5SyncController {
 
   /**
    * 获取同步状态接口
-   * GET /frkbapi/v1/md5-sync/status
+   * GET /frkbapi/v1/fingerprint-sync/status
    */
   static getSyncStatus = asyncHandler(async (req, res) => {
     const { userKey } = req.query;
@@ -315,7 +370,6 @@ class Md5SyncController {
         });
       }
 
-      // 验证userKey格式
       const validation = UserKeyUtils.validate(userKey);
       if (!validation.valid) {
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -326,14 +380,8 @@ class Md5SyncController {
       }
 
       const normalizedUserKey = validation.normalized;
-      
-      // 获取同步状态
       const syncStatus = syncService.getSyncStatus(normalizedUserKey);
-      
-      // 获取缓存的用户元数据
       const userMeta = cacheService.getUserMeta(normalizedUserKey);
-      
-      // 获取布隆过滤器统计
       const bloomStats = bloomFilterService.getFilterStats(normalizedUserKey);
       
       res.json({
@@ -352,7 +400,7 @@ class Md5SyncController {
 
   /**
    * 获取服务统计信息接口
-   * GET /frkbapi/v1/md5-sync/service-stats
+   * GET /frkbapi/v1/fingerprint-sync/service-stats
    */
   static getServiceStats = asyncHandler(async (req, res) => {
     try {
@@ -371,13 +419,12 @@ class Md5SyncController {
 
   /**
    * 清除用户缓存接口
-   * DELETE /frkbapi/v1/md5-sync/cache/:userKey
+   * DELETE /frkbapi/v1/fingerprint-sync/cache/:userKey
    */
   static clearUserCache = asyncHandler(async (req, res) => {
     const { userKey } = req.params;
     
     try {
-      // 验证userKey格式
       const validation = UserKeyUtils.validate(userKey);
       if (!validation.valid) {
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -388,11 +435,7 @@ class Md5SyncController {
       }
 
       const normalizedUserKey = validation.normalized;
-      
-      // 清除用户缓存
       const clearedCount = cacheService.clearUserCache(normalizedUserKey);
-      
-      // 清除布隆过滤器
       bloomFilterService.clearFilter(normalizedUserKey);
       
       logger.admin('清除用户缓存', {
@@ -418,13 +461,12 @@ class Md5SyncController {
 
   /**
    * 强制释放同步锁接口（管理员功能）
-   * DELETE /frkbapi/v1/md5-sync/lock/:userKey
+   * DELETE /frkbapi/v1/fingerprint-sync/lock/:userKey
    */
   static forceSyncUnlock = asyncHandler(async (req, res) => {
     const { userKey } = req.params;
     
     try {
-      // 验证userKey格式
       const validation = UserKeyUtils.validate(userKey);
       if (!validation.valid) {
         return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -435,11 +477,7 @@ class Md5SyncController {
       }
 
       const normalizedUserKey = validation.normalized;
-      
-      // 获取当前锁状态
       const currentLock = syncService.getSyncStatus(normalizedUserKey);
-      
-      // 强制释放锁
       syncService.releaseSyncLock(normalizedUserKey);
       
       logger.admin('强制释放同步锁', {
@@ -461,4 +499,6 @@ class Md5SyncController {
   });
 }
 
-module.exports = Md5SyncController;
+module.exports = FingerprintSyncController;
+
+

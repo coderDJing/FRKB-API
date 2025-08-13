@@ -4,7 +4,7 @@ const { COLLECTIONS } = require('../config/constants');
 
 /**
  * 用户集合元数据模型
- * 存储每个用户MD5集合的元信息，用于快速比较和统计
+ * 存储每个用户指纹集合的元信息（SHA256），用于快速比较和统计
  */
 const userCollectionMetaSchema = new mongoose.Schema({
   // 用户标识
@@ -21,7 +21,7 @@ const userCollectionMetaSchema = new mongoose.Schema({
     }
   },
 
-  // MD5集合总数
+  // 指纹集合总数
   totalCount: {
     type: Number,
     required: true,
@@ -107,21 +107,21 @@ userCollectionMetaSchema.index({ totalCount: 1 });
 // 实例方法：计算集合哈希
 userCollectionMetaSchema.methods.calculateCollectionHash = async function() {
   try {
-    const UserMd5Collection = require('./UserMd5Collection');
+  const UserFingerprintCollection = require('./UserFingerprintCollection');
     
-    // 获取所有MD5并排序
-    const md5s = await UserMd5Collection
+    // 获取所有指纹并排序
+    const fps = await UserFingerprintCollection
       .find({ userKey: this.userKey })
-      .select('md5')
-      .sort({ md5: 1 })
+      .select('fingerprint')
+      .sort({ fingerprint: 1 })
       .lean();
     
-    const md5Array = md5s.map(doc => doc.md5);
+    const fingerprintArray = fps.map(doc => doc.fingerprint);
     
     // 计算哈希
     const hash = crypto
       .createHash('sha256')
-      .update(md5Array.join(''))
+      .update(fingerprintArray.join(''))
       .digest('hex');
     
     this.collectionHash = hash;
@@ -135,10 +135,10 @@ userCollectionMetaSchema.methods.calculateCollectionHash = async function() {
 // 实例方法：更新统计信息
 userCollectionMetaSchema.methods.updateStats = async function(syncResult = {}) {
   try {
-    const UserMd5Collection = require('./UserMd5Collection');
+    const UserFingerprintCollection = require('./UserFingerprintCollection');
     
     // 更新总数
-    this.totalCount = await UserMd5Collection.countDocuments({ 
+    this.totalCount = await UserFingerprintCollection.countDocuments({ 
       userKey: this.userKey 
     });
     
@@ -169,7 +169,7 @@ userCollectionMetaSchema.methods.updateStats = async function(syncResult = {}) {
     
     if (!meta) {
       // 创建新的元数据记录（快速路径）：
-      // 按业务约定，若不存在元数据则视为该用户当前无有效MD5数据，
+      // 按业务约定，若不存在元数据则视为该用户当前无有效指纹数据，
       // 首次创建时不进行全量扫描与哈希计算，避免首个 /check 卡顿。
         meta = await this.create({
           userKey,

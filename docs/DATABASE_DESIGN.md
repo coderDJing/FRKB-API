@@ -4,9 +4,9 @@
 
 ## 集合与模型
 
-1) 用户MD5集合：`UserMd5Collection`（`src/models/UserMd5Collection.js`）
-- 字段：`userKey`（UUID v4）、`md5`（32位hex）、`createdAt`、`updatedAt`
-- 索引：`{ userKey: 1, md5: 1 }` 唯一；`{ userKey: 1, createdAt: -1 }`
+1) 用户指纹集合：`UserFingerprintCollection`（`src/models/UserFingerprintCollection.js`）
+- 字段：`userKey`（UUID v4）、`fingerprint`（64位十六进制 SHA256）、`createdAt`、`updatedAt`
+- 索引：`{ userKey: 1, fingerprint: 1 }` 唯一；`{ userKey: 1, createdAt: -1 }`
 
 2) 用户集合元数据：`UserCollectionMeta`（`src/models/UserCollectionMeta.js`）
 - 字段：`userKey`（唯一）、`totalCount`、`collectionHash`、`lastSyncAt`、`createdAt`、`updatedAt`
@@ -14,12 +14,11 @@
 - 索引：`userKey` 唯一；`{ lastSyncAt: -1 }`、`{ totalCount: 1 }`
 
 3) 授权密钥白名单：`AuthorizedUserKey`（`src/models/AuthorizedUserKey.js`）
-- 字段：`userKey`（UUID v4，唯一）、`description`、`isActive`、`createdBy`、`lastUsedAt`、`usageStats`、`permissions`、`notes`
-- 权限结构：`permissions.canSync`、`permissions.canQuery`、`permissions.dailyRequestLimit`
+- 字段：`userKey`（UUID v4，唯一）、`description`、`isActive`、`createdBy`、`lastUsedAt`、`usageStats`、`notes`
 - 索引：`userKey` 唯一；`isActive`、`lastUsedAt`、`createdAt`
 
 ## 约束与校验
-- `userKey` 必须满足 UUID v4 正则；`md5` 必须为 32 位十六进制
+- `userKey` 必须满足 UUID v4 正则；`fingerprint` 必须为 64 位十六进制（SHA256）
 - 所有模型均开启 `timestamps`，并关闭 `versionKey`
 
 ## 建议

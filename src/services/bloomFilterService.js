@@ -1,13 +1,13 @@
 const { BloomFilter } = require('bloom-filters');
 const UserCollectionMeta = require('../models/UserCollectionMeta');
-const UserMd5Collection = require('../models/UserMd5Collection');
+const UserFingerprintCollection = require('../models/UserFingerprintCollection');
 const HashUtils = require('../utils/hashUtils');
 const logger = require('../utils/logger');
 const { BLOOM_FILTER } = require('../config/constants');
 
 /**
  * 布隆过滤器服务
- * 用于快速判断MD5是否可能存在，减少数据库查询次数
+ * 用于快速判断指纹是否可能存在，减少数据库查询次数
  */
 class BloomFilterService {
   constructor() {
@@ -74,11 +74,11 @@ class BloomFilterService {
         return filter;
       }
 
-      // 获取用户的MD5数量
-      const count = await UserMd5Collection.getUserMd5Count(userKey);
+      // 获取用户指纹数量
+      const count = await UserFingerprintCollection.getUserFingerprintCount(userKey);
       
       if (count === 0) {
-        logger.debug('用户无MD5数据，跳过布隆过滤器初始化', {
+        logger.debug('用户无指纹数据，跳过布隆过滤器初始化', {
           userKey: userKey.substring(0, 8) + '***'
         });
         return null;
@@ -88,28 +88,28 @@ class BloomFilterService {
       const expectedElements = Math.max(count * 1.2, 1000); // 预留20%空间
       const filter = this.createFilter(expectedElements);
 
-      // 分批加载MD5数据
+      // 分批加载指纹数据
       const batchSize = 10000;
       let skip = 0;
       let totalLoaded = 0;
       
       logger.info('开始构建布隆过滤器', {
         userKey: userKey.substring(0, 8) + '***',
-        totalMd5s: count,
+        totalFingerprints: count,
         expectedElements,
         batchSize
       });
 
       while (skip < count) {
-        const md5s = await UserMd5Collection
+        const docs = await UserFingerprintCollection
           .find({ userKey })
-          .select('md5')
+          .select('fingerprint')
           .skip(skip)
           .limit(batchSize)
           .lean();
 
-        for (const doc of md5s) {
-          filter.add(doc.md5);
+        for (const doc of docs) {
+          filter.add(doc.fingerprint);
           totalLoaded++;
         }
 
@@ -165,12 +165,12 @@ class BloomFilterService {
   }
 
   /**
-   * 检查MD5是否可能存在
+   * 检查指纹是否可能存在
    * @param {string} userKey - 用户密钥
-   * @param {string} md5 - MD5值
+   * @param {string} fingerprint - 指纹（SHA256）
    * @returns {Promise<Object>} 检查结果
    */
-  async mightContain(userKey, md5) {
+  async mightContain(userKey, fingerprint) {
     if (!this.enabled) {
       return { possible: true, source: 'bloom_disabled' };
     }
@@ -187,7 +187,7 @@ class BloomFilterService {
         }
       }
 
-      const possible = filter.has(md5.toLowerCase());
+      const possible = filter.has(String(fingerprint).toLowerCase());
       
       return {
         possible,
@@ -198,7 +198,7 @@ class BloomFilterService {
     } catch (error) {
       logger.error('布隆过滤器检查失败', {
         userKey: userKey.substring(0, 8) + '***',
-        md5: md5.substring(0, 8) + '***',
+        fingerprint: String(fingerprint).substring(0, 8) + '***',
         error: error.message
       });
       
@@ -208,16 +208,16 @@ class BloomFilterService {
   }
 
   /**
-   * 批量检查MD5是否可能存在
+   * 批量检查指纹是否可能存在
    * @param {string} userKey - 用户密钥
-   * @param {string[]} md5Array - MD5数组
+   * @param {string[]} fingerprintArray - 指纹数组
    * @returns {Promise<Object>} 批量检查结果
    */
-  async batchMightContain(userKey, md5Array) {
+  async batchMightContain(userKey, fingerprintArray) {
     if (!this.enabled) {
       return {
-        possible: md5Array.map(md5 => ({ md5, possible: true, source: 'bloom_disabled' })),
-        summary: { total: md5Array.length, possible: md5Array.length, impossible: 0 }
+        possible: fingerprintArray.map(fp => ({ fingerprint: fp, possible: true, source: 'bloom_disabled' })),
+        summary: { total: fingerprintArray.length, possible: fingerprintArray.length, impossible: 0 }
       };
     }
 
@@ -229,15 +229,15 @@ class BloomFilterService {
         
         if (!filter) {
           return {
-            possible: md5Array.map(md5 => ({ md5, possible: false, source: 'no_data' })),
-            summary: { total: md5Array.length, possible: 0, impossible: md5Array.length }
+            possible: fingerprintArray.map(fp => ({ fingerprint: fp, possible: false, source: 'no_data' })),
+            summary: { total: fingerprintArray.length, possible: 0, impossible: fingerprintArray.length }
           };
         }
       }
 
-      const results = md5Array.map(md5 => ({
-        md5,
-        possible: filter.has(md5.toLowerCase()),
+      const results = fingerprintArray.map(fp => ({
+        fingerprint: fp,
+        possible: filter.has(String(fp).toLowerCase()),
         source: 'bloom_filter'
       }));
 
@@ -246,19 +246,19 @@ class BloomFilterService {
 
       logger.debug('布隆过滤器批量检查', {
         userKey: userKey.substring(0, 8) + '***',
-        total: md5Array.length,
+        total: fingerprintArray.length,
         possible: possibleCount,
         impossible: impossibleCount,
-        filteredRatio: `${(impossibleCount / md5Array.length * 100).toFixed(1)}%`
+        filteredRatio: `${(impossibleCount / Math.max(fingerprintArray.length,1) * 100).toFixed(1)}%`
       });
 
       return {
         possible: results,
         summary: {
-          total: md5Array.length,
+          total: fingerprintArray.length,
           possible: possibleCount,
           impossible: impossibleCount,
-          filteredRatio: impossibleCount / md5Array.length
+          filteredRatio: fingerprintArray.length ? (impossibleCount / fingerprintArray.length) : 0
         },
         meta: this.filterMetas.get(userKey)
       };
@@ -266,25 +266,25 @@ class BloomFilterService {
     } catch (error) {
       logger.error('布隆过滤器批量检查失败', {
         userKey: userKey.substring(0, 8) + '***',
-        count: md5Array.length,
+        count: fingerprintArray.length,
         error: error.message
       });
       
       // 出错时返回全部可能存在
       return {
-        possible: md5Array.map(md5 => ({ md5, possible: true, source: 'error_fallback' })),
-        summary: { total: md5Array.length, possible: md5Array.length, impossible: 0 }
+        possible: fingerprintArray.map(fp => ({ fingerprint: fp, possible: true, source: 'error_fallback' })),
+        summary: { total: fingerprintArray.length, possible: fingerprintArray.length, impossible: 0 }
       };
     }
   }
 
   /**
-   * 向过滤器添加新的MD5
+   * 向过滤器添加新的指纹
    * @param {string} userKey - 用户密钥
-   * @param {string[]} md5Array - MD5数组
+   * @param {string[]} fingerprintArray - 指纹数组
    * @returns {Promise<boolean>} 是否成功
    */
-  async addMd5s(userKey, md5Array) {
+  async addFingerprints(userKey, fingerprintArray) {
     if (!this.enabled) {
       return true;
     }
@@ -298,7 +298,7 @@ class BloomFilterService {
         
         if (!filter) {
           // 创建新的过滤器
-          const expectedElements = Math.max(md5Array.length * 10, 1000);
+          const expectedElements = Math.max(fingerprintArray.length * 10, 1000);
           filter = this.createFilter(expectedElements);
           this.filters.set(userKey, filter);
           this.filterMetas.set(userKey, {
@@ -311,30 +311,30 @@ class BloomFilterService {
         }
       }
 
-      // 添加MD5到过滤器
-      for (const md5 of md5Array) {
-        filter.add(md5.toLowerCase());
+      // 添加指纹到过滤器
+      for (const fp of fingerprintArray) {
+        filter.add(String(fp).toLowerCase());
       }
 
       // 更新元数据
       const meta = this.filterMetas.get(userKey);
       if (meta) {
-        meta.elementCount += md5Array.length;
+        meta.elementCount += fingerprintArray.length;
         meta.lastUpdatedAt = new Date();
       }
 
-      logger.debug('向布隆过滤器添加MD5', {
+      logger.debug('向布隆过滤器添加指纹', {
         userKey: userKey.substring(0, 8) + '***',
-        addedCount: md5Array.length,
+        addedCount: fingerprintArray.length,
         totalElements: meta?.elementCount || 'unknown'
       });
 
       return true;
 
     } catch (error) {
-      logger.error('向布隆过滤器添加MD5失败', {
+      logger.error('向布隆过滤器添加指纹失败', {
         userKey: userKey.substring(0, 8) + '***',
-        count: md5Array.length,
+        count: fingerprintArray.length,
         error: error.message
       });
       return false;

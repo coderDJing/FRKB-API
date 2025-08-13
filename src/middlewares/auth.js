@@ -145,15 +145,12 @@ const userKeyAuth = async (req, res, next) => {
       
       const statusCode = authResult.reason === 'USER_KEY_NOT_FOUND' 
         ? HTTP_STATUS.NOT_FOUND 
-        : authResult.reason === 'DAILY_LIMIT_EXCEEDED'
-        ? HTTP_STATUS.RATE_LIMITED
         : HTTP_STATUS.FORBIDDEN;
       
       return res.status(statusCode).json({
         success: false,
         error: authResult.reason,
-        message: authResult.message,
-        ...(authResult.limitInfo && { limitInfo: authResult.limitInfo })
+        message: authResult.message
       });
     }
 
@@ -161,13 +158,13 @@ const userKeyAuth = async (req, res, next) => {
     req.userKey = normalizedUserKey;
     req.authKey = authResult.authKey;
     req.userKeyValidatedAt = new Date();
-    req.limitInfo = authResult.limitInfo;
+    // 已移除日配额信息
 
     logger.info('userKey验证成功', {
       userKey: UserKeyUtils.toShortId(normalizedUserKey),
       ip: req.ip,
       url: req.originalUrl,
-      remainingRequests: authResult.limitInfo?.remaining || '无限制'
+      remainingRequests: 'n/a'
     });
 
     next();
@@ -189,82 +186,6 @@ const userKeyAuth = async (req, res, next) => {
   }
 };
 
-/**
- * 权限检查中间件工厂
- * @param {string} permission - 需要的权限类型
- */
-const requirePermission = (permission) => {
-  return (req, res, next) => {
-    try {
-      if (!req.authKey) {
-        return res.status(HTTP_STATUS.FORBIDDEN).json({
-          success: false,
-          error: 'NO_AUTH_KEY',
-          message: '权限验证失败：未找到认证信息'
-        });
-      }
-
-      const permissions = req.authKey.permissions || {};
-      
-      switch (permission) {
-        case 'sync':
-          if (!permissions.canSync) {
-            logger.security('同步权限被拒绝', {
-              userKey: UserKeyUtils.toShortId(req.userKey),
-              ip: req.ip,
-              url: req.originalUrl
-            });
-            
-            return res.status(HTTP_STATUS.FORBIDDEN).json({
-              success: false,
-              error: 'SYNC_PERMISSION_DENIED',
-              message: '该userKey没有同步权限'
-            });
-          }
-          break;
-          
-        case 'query':
-          if (!permissions.canQuery) {
-            logger.security('查询权限被拒绝', {
-              userKey: UserKeyUtils.toShortId(req.userKey),
-              ip: req.ip,
-              url: req.originalUrl
-            });
-            
-            return res.status(HTTP_STATUS.FORBIDDEN).json({
-              success: false,
-              error: 'QUERY_PERMISSION_DENIED',
-              message: '该userKey没有查询权限'
-            });
-          }
-          break;
-          
-        default:
-          return res.status(HTTP_STATUS.INTERNAL_ERROR).json({
-            success: false,
-            error: 'UNKNOWN_PERMISSION',
-            message: '未知的权限类型'
-          });
-      }
-
-      next();
-      
-    } catch (error) {
-      logger.error('权限检查异常', {
-        error: error.message,
-        permission,
-        userKey: req.userKey ? UserKeyUtils.toShortId(req.userKey) : 'unknown',
-        url: req.originalUrl
-      });
-      
-      return res.status(HTTP_STATUS.INTERNAL_ERROR).json({
-        success: false,
-        error: 'PERMISSION_CHECK_ERROR',
-        message: '权限检查过程中发生错误'
-      });
-    }
-  };
-};
 
 /**
  * 组合认证中间件（API密钥 + userKey验证）
@@ -274,12 +195,12 @@ const fullAuth = [apiKeyAuth, userKeyAuth];
 /**
  * 同步操作认证中间件（包含同步权限检查）
  */
-const syncAuth = [apiKeyAuth, userKeyAuth, requirePermission('sync')];
+const syncAuth = [apiKeyAuth, userKeyAuth];
 
 /**
  * 查询操作认证中间件（包含查询权限检查）
  */
-const queryAuth = [apiKeyAuth, userKeyAuth, requirePermission('query')];
+const queryAuth = [apiKeyAuth, userKeyAuth];
 
 /**
  * 可选的userKey验证中间件（如果提供了userKey则验证，否则跳过）
@@ -362,7 +283,6 @@ const adminAuth = (req, res, next) => {
 module.exports = {
   apiKeyAuth,
   userKeyAuth,
-  requirePermission,
   fullAuth,
   syncAuth,
   queryAuth,

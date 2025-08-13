@@ -77,27 +77,7 @@ const authorizedUserKeySchema = new mongoose.Schema({
     }
   },
 
-  // 权限配置
-  permissions: {
-    // 是否允许同步
-    canSync: {
-      type: Boolean,
-      default: true
-    },
-    
-    // 是否允许查询
-    canQuery: {
-      type: Boolean,
-      default: true
-    },
-    
-    // 每日最大请求数 (0表示无限制)
-    dailyRequestLimit: {
-      type: Number,
-      default: 0,
-      min: 0
-    }
-  },
+  // 已移除细粒度权限与日配额，仅保留启用/禁用
 
 
   // 备注信息
@@ -165,52 +145,7 @@ authorizedUserKeySchema.methods.updateUsage = async function(requestInfo = {}) {
   }
 };
 
-// 实例方法：检查每日请求限制
-authorizedUserKeySchema.methods.checkDailyLimit = async function() {
-  if (this.permissions.dailyRequestLimit === 0) {
-    return { allowed: true, remaining: -1 }; // 无限制
-  }
-  
-  try {
-    // 获取今日开始时间
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const tomorrow = new Date(today);
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    
-    // 查询今日请求次数
-    const dailyRequests = await this.constructor.aggregate([
-      {
-        $match: {
-          userKey: this.userKey,
-          lastUsedAt: {
-            $gte: today,
-            $lt: tomorrow
-          }
-        }
-      },
-      {
-        $project: {
-          totalRequests: '$usageStats.totalRequests'
-        }
-      }
-    ]);
-    
-    const todayCount = dailyRequests.length > 0 ? dailyRequests[0].totalRequests : 0;
-    const remaining = Math.max(0, this.permissions.dailyRequestLimit - todayCount);
-    
-    return {
-      allowed: remaining > 0,
-      remaining,
-      dailyLimit: this.permissions.dailyRequestLimit,
-      used: todayCount
-    };
-  } catch (error) {
-    console.error('检查每日限制失败:', error);
-    return { allowed: true, remaining: -1, error: error.message };
-  }
-};
+// 已移除：按日请求限制相关逻辑
 
 // 静态方法：验证userKey是否有效
 authorizedUserKeySchema.statics.validateUserKey = async function(userKey, requestInfo = {}) {
@@ -232,25 +167,13 @@ authorizedUserKeySchema.statics.validateUserKey = async function(userKey, reques
         message: 'userKey已被禁用'
       };
     }
-    
-    // 检查每日限制
-    const limitCheck = await authKey.checkDailyLimit();
-    if (!limitCheck.allowed) {
-      return {
-        valid: false,
-        reason: 'DAILY_LIMIT_EXCEEDED',
-        message: '今日请求次数已达上限',
-        limitInfo: limitCheck
-      };
-    }
-    
+
     // 更新使用统计
     await authKey.updateUsage(requestInfo);
     
     return { 
       valid: true, 
-      authKey,
-      limitInfo: limitCheck
+      authKey
     };
   } catch (error) {
     console.error('验证userKey失败:', error);
@@ -272,11 +195,6 @@ authorizedUserKeySchema.statics.createUserKey = async function(options = {}) {
       userKey,
       description: options.description || '新创建的用户密钥',
       createdBy: options.createdBy || 'admin',
-      permissions: {
-        canSync: options.canSync !== false,
-        canQuery: options.canQuery !== false,
-        dailyRequestLimit: options.dailyRequestLimit || 0
-      },
       notes: options.notes || ''
     });
     
@@ -303,7 +221,7 @@ authorizedUserKeySchema.statics.getActiveUserKeys = function(options = {}) {
   const query = { isActive: true };
 
   return this.find(query)
-    .select('userKey description lastUsedAt usageStats permissions createdAt')
+    .select('userKey description lastUsedAt usageStats createdAt')
     .sort({ createdAt: -1 });
 };
 

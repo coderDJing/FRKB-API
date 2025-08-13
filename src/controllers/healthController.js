@@ -4,7 +4,7 @@ const logger = require('../utils/logger');
 const cacheService = require('../services/cacheService');
 const bloomFilterService = require('../services/bloomFilterService');
 const syncService = require('../services/syncService');
-const UserMd5Collection = require('../models/UserMd5Collection');
+const UserFingerprintCollection = require('../models/UserFingerprintCollection');
 const UserCollectionMeta = require('../models/UserCollectionMeta');
 const AuthorizedUserKey = require('../models/AuthorizedUserKey');
 
@@ -267,7 +267,7 @@ class HealthController {
       
       // 执行简单查询测试连接
       const startTime = Date.now();
-      await UserMd5Collection.countDocuments().limit(1);
+      await UserFingerprintCollection.countDocuments().limit(1);
       const queryTime = Date.now() - startTime;
       
       return {
@@ -365,12 +365,12 @@ class HealthController {
   static async getDatabaseStats() {
     try {
       const [
-        md5Count,
+        fingerprintCount,
         metaCount,
         userKeyCount,
         activeUserKeyCount
       ] = await Promise.all([
-        UserMd5Collection.estimatedDocumentCount(),
+        UserFingerprintCollection.estimatedDocumentCount(),
         UserCollectionMeta.estimatedDocumentCount(),
         AuthorizedUserKey.estimatedDocumentCount(),
         AuthorizedUserKey.countDocuments({ isActive: true })
@@ -378,7 +378,7 @@ class HealthController {
       
       return {
         collections: {
-          md5Records: md5Count,
+          fingerprintRecords: fingerprintCount,
           userMetas: metaCount,
           totalUserKeys: userKeyCount,
           activeUserKeys: activeUserKeyCount
@@ -454,11 +454,11 @@ class HealthController {
       
       // 测试查询性能
       const queryStart = Date.now();
-      await UserMd5Collection.findOne().limit(1);
+      await UserFingerprintCollection.findOne().limit(1);
       const queryTime = Date.now() - queryStart;
       
       // 获取索引信息
-      const indexes = await UserMd5Collection.collection.indexes();
+      const indexes = await UserFingerprintCollection.collection.indexes();
       
       return {
         status: 'healthy',

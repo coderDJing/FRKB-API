@@ -46,6 +46,13 @@ const consoleFormat = winston.format.combine(
       log += `\n${stack}`;
     }
     
+    // 控制台也输出关键信息，便于快速诊断
+    const metaKeys = Object.keys(meta);
+    if (metaKeys.length > 0) {
+      // 控制台打印精简版元数据
+      log += `\n  meta: ${JSON.stringify(meta, null, 2)}`;
+    }
+    
     return log;
   })
 );
@@ -133,7 +140,9 @@ logger.apiRequest = (req, res, duration) => {
     ip,
     userAgent: headers['user-agent'],
     duration: `${duration}ms`,
-    userKey: req.userKey || 'unknown'
+    userKey: req.userKey || 'unknown',
+    requestId: req.id || undefined,
+    contentLength: res.get && res.get('content-length') || undefined
   };
   
   if (statusCode >= 400) {

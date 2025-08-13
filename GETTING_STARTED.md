@@ -81,10 +81,10 @@ pnpm admin show <userKey前8位>
 
 | 接口 | 方法 | 说明 |
 |------|------|------|
-| `/frkbapi/v1/md5-sync/check` | POST | 同步预检查 |
-| `/frkbapi/v1/md5-sync/bidirectional-diff` | POST | 双向差异检测 |
-| `/frkbapi/v1/md5-sync/add` | POST | 批量添加MD5 |
-| `/frkbapi/v1/md5-sync/pull-diff-page` | POST | 分页拉取差异 |
+| `/frkbapi/v1/fingerprint-sync/check` | POST | 同步预检查 |
+| `/frkbapi/v1/fingerprint-sync/bidirectional-diff` | POST | 双向差异检测 |
+| `/frkbapi/v1/fingerprint-sync/add` | POST | 批量添加指纹 |
+| `/frkbapi/v1/fingerprint-sync/pull-diff-page` | POST | 分页拉取差异 |
 
 ### 监控接口
 
@@ -92,7 +92,7 @@ pnpm admin show <userKey前8位>
 |------|------|------|
 | `/health` | GET | 基础健康检查 |
 | `/frkbapi/v1/health/detailed` | GET | 详细系统状态 |
-| `/frkbapi/v1/md5-sync/status` | GET | 同步状态查询 |
+| `/frkbapi/v1/fingerprint-sync/status` | GET | 同步状态查询 |
 
 ## ⚙️ 常用管理命令
 
@@ -102,7 +102,7 @@ pnpm admin create --desc "新用户"          # 创建 userKey
 pnpm admin list --active                   # 查看活跃用户
 pnpm admin show <userKey>                  # 查看用户详情
 pnpm admin status                          # 查看系统状态
-pnpm admin cleanup                         # 清理无效数据（无主MD5/无主或空meta）
+pnpm admin cleanup                         # 清理无效数据（无主指纹/无主或空meta）
 
 # 服务管理
 pnpm start                                 # 生产模式启动
@@ -165,4 +165,4 @@ db.createUser({
 
 ---
 
-🎉 **恭喜！** 您已成功启动 FRKB-API 系统，现在可以开始体验高效的 MD5 集合同步服务了！
+🎉 **恭喜！** 您已成功启动 FRKB-API 系统，现在可以开始体验高效的指纹（SHA256）集合同步服务了！

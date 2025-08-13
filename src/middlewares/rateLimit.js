@@ -312,17 +312,15 @@ const createCustomRateLimit = (options = {}) => {
 const rateLimitMonitor = (req, res, next) => {
   // 记录限流相关的头信息
   res.on('finish', () => {
-    const rateLimitHeaders = {
-      remaining: res.getHeader('X-RateLimit-Remaining'),
-      limit: res.getHeader('X-RateLimit-Limit'),
-      reset: res.getHeader('X-RateLimit-Reset')
-    };
+    // 优先读取标准 RateLimit-* 头
+    const remainingHeader = res.getHeader('RateLimit-Remaining') || res.getHeader('X-RateLimit-Remaining');
+    const limitHeader = res.getHeader('RateLimit-Limit') || res.getHeader('X-RateLimit-Limit');
+    const resetHeader = res.getHeader('RateLimit-Reset') || res.getHeader('X-RateLimit-Reset');
+
+    const remaining = remainingHeader != null ? parseInt(remainingHeader) : null;
+    const limit = limitHeader != null ? parseInt(limitHeader) : null;
     
-    // 如果剩余请求数较少，记录警告
-    const remaining = parseInt(rateLimitHeaders.remaining);
-    const limit = parseInt(rateLimitHeaders.limit);
-    
-    if (remaining !== null && limit !== null && remaining < limit * 0.1) {
+    if (remaining !== null && limit !== null && !Number.isNaN(remaining) && !Number.isNaN(limit) && remaining < limit * 0.1) {
       const userKey = req.userKey || req.body?.userKey || req.query?.userKey;
       
       logger.warn('请求频率接近限制', {
@@ -331,6 +329,7 @@ const rateLimitMonitor = (req, res, next) => {
         url: req.originalUrl,
         remaining,
         limit,
+        reset: resetHeader,
         utilization: `${((limit - remaining) / limit * 100).toFixed(1)}%`
       });
     }

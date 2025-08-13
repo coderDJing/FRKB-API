@@ -2,7 +2,7 @@ const { body, query, param, validationResult } = require('express-validator');
 const HashUtils = require('../utils/hashUtils');
 const UserKeyUtils = require('../utils/userKeyUtils');
 const logger = require('../utils/logger');
-const { HTTP_STATUS, ERROR_CODES, BATCH_CONFIG, MD5_REGEX } = require('../config/constants');
+const { HTTP_STATUS, ERROR_CODES, BATCH_CONFIG, FINGERPRINT_REGEX } = require('../config/constants');
 
 /**
  * 处理验证错误的中间件
@@ -29,9 +29,9 @@ const handleValidationErrors = (req, res, next) => {
     
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
       success: false,
-      error: ERROR_CODES.INVALID_MD5_FORMAT,
+      error: 'VALIDATION_ERROR',
       message: '请求参数验证失败',
-      errors: errorDetails
+      details: { errors: errorDetails }
     });
   }
   
@@ -56,26 +56,26 @@ const validateUserKey = () => [
 ];
 
 /**
- * MD5值验证规则
+ * 指纹值验证规则（64位SHA256）
  */
-const validateMd5 = (fieldName = 'md5') => [
+const validateFingerprint = (fieldName = 'fingerprint') => [
   body(fieldName)
     .notEmpty()
     .withMessage(`${fieldName}不能为空`)
     .isString()
     .withMessage(`${fieldName}必须是字符串`)
-    .isLength({ min: 32, max: 32 })
-    .withMessage(`${fieldName}必须是32位字符`)
-    .matches(MD5_REGEX)
-    .withMessage(`${fieldName}必须是有效的MD5格式（32位十六进制）`)
+    .isLength({ min: 64, max: 64 })
+    .withMessage(`${fieldName}长度必须为64个字符（SHA256）`)
+    .matches(FINGERPRINT_REGEX)
+    .withMessage(`${fieldName}必须是有效的指纹格式（64位十六进制 SHA256）`)
     .customSanitizer(value => value.toLowerCase()),
   handleValidationErrors
 ];
 
 /**
- * MD5数组验证规则
+ * 指纹数组验证规则（64位SHA256）
  */
-const validateMd5Array = (fieldName = 'md5Array', options = {}) => {
+const validateFingerprintArray = (fieldName = 'fingerprints', options = {}) => {
   const {
     maxLength = BATCH_CONFIG.BATCH_SIZE,
     minLength = 1,
@@ -104,19 +104,19 @@ const validateMd5Array = (fieldName = 'md5Array', options = {}) => {
             return;
           }
           
-          if (item.length !== 32) {
-            invalidItems.push({ index, value: item, reason: '长度必须为32个字符' });
+          if (item.length !== 64) {
+            invalidItems.push({ index, value: item, reason: '长度必须为64个字符（SHA256）' });
             return;
           }
           
-          if (!MD5_REGEX.test(item)) {
-            invalidItems.push({ index, value: item, reason: '不是有效的MD5格式' });
+          if (!FINGERPRINT_REGEX.test(item)) {
+            invalidItems.push({ index, value: item, reason: '不是有效的指纹格式（64位十六进制 SHA256）' });
             return;
           }
           
           const normalizedItem = item.toLowerCase();
           if (seen.has(normalizedItem)) {
-            duplicates.push({ index, value: item, reason: '重复的MD5值' });
+            duplicates.push({ index, value: item, reason: '重复的指纹值' });
           } else {
             seen.add(normalizedItem);
           }
@@ -210,8 +210,8 @@ const validatePagination = () => [
   
   query('sortBy')
     .optional()
-    .isIn(['createdAt', 'updatedAt', 'md5'])
-    .withMessage('排序字段只能是 createdAt, updatedAt, md5'),
+    .isIn(['createdAt', 'updatedAt', 'fingerprint'])
+    .withMessage('排序字段只能是 createdAt, updatedAt, fingerprint'),
   
   query('sortOrder')
     .optional()
@@ -231,24 +231,24 @@ const validateSyncCheck = () => [
 ];
 
 /**
- * 批量推送验证规则
+ * 批量推送验证规则（指纹）
  */
 const validateBatchPush = () => [
   ...validateUserKey(),
-  ...validateMd5Array('md5Batch', { maxLength: BATCH_CONFIG.BATCH_SIZE }),
+  ...validateFingerprintArray('fingerprintBatch', { maxLength: BATCH_CONFIG.BATCH_SIZE }),
   ...validateBatchInfo()
 ];
 
 /**
- * 差异分析验证规则
+ * 差异分析验证规则（指纹）
  */
 const validateDiffAnalysis = () => [
   ...validateUserKey(),
-  ...validateMd5Array('clientMd5s', { maxLength: 100000 }) // 允许更大的数组用于完整差异分析
+  ...validateFingerprintArray('clientFingerprints', { maxLength: 100000 }) // 允许更大的数组用于完整差异分析
 ];
 
 /**
- * 分页拉取验证规则
+ * 分页拉取验证规则（指纹）
  */
 const validatePullDiffPage = () => [
   ...validateUserKey(),
@@ -258,7 +258,7 @@ const validatePullDiffPage = () => [
     .withMessage('差异会话ID不能为空')
     .isString()
     .withMessage('差异会话ID必须是字符串')
-    .matches(/^diff_[a-z0-9]+$/i)
+    .matches(/^diff_[a-z0-9_]+$/i)
     .withMessage('差异会话ID格式无效'),
   
   body('pageIndex')
@@ -272,11 +272,11 @@ const validatePullDiffPage = () => [
 ];
 
 /**
- * 双向差异检测验证规则
+ * 双向差异检测验证规则（指纹）
  */
 const validateBidirectionalDiff = () => [
   ...validateUserKey(),
-  ...validateMd5Array('clientMd5s', { maxLength: BATCH_CONFIG.BATCH_SIZE }),
+  ...validateFingerprintArray('clientFingerprints', { maxLength: BATCH_CONFIG.BATCH_SIZE }),
   
   body('batchIndex')
     .notEmpty()
@@ -296,29 +296,29 @@ const validateBidirectionalDiff = () => [
 ];
 
 /**
- * 批量添加MD5验证规则
+ * 批量添加指纹验证规则
  */
 const validateBatchAdd = () => [
   ...validateUserKey(),
-  ...validateMd5Array('addMd5s', { maxLength: BATCH_CONFIG.BATCH_SIZE }),
+  ...validateFingerprintArray('addFingerprints', { maxLength: BATCH_CONFIG.BATCH_SIZE }),
   handleValidationErrors
 ];
 
 /**
- * 自定义验证：检查MD5数组实际内容
+ * 自定义验证：检查指纹数组实际内容
  */
-const validateMd5ArrayContent = (req, res, next) => {
+const validateFingerprintArrayContent = (req, res, next) => {
   try {
-    const md5Arrays = ['md5Array', 'md5Batch', 'clientMd5s', 'addMd5s'];
+    const fingerprintArrays = ['fingerprints', 'fingerprintBatch', 'clientFingerprints', 'addFingerprints'];
     
-    for (const fieldName of md5Arrays) {
+    for (const fieldName of fingerprintArrays) {
       const array = req.body[fieldName];
       
       if (array && Array.isArray(array)) {
-        const validation = HashUtils.validateMd5Array(array);
+        const validation = HashUtils.validateFingerprintArray(array);
         
         if (!validation.valid) {
-          logger.warn('MD5数组内容验证失败', {
+          logger.warn('指纹数组内容验证失败', {
             field: fieldName,
             totalCount: array.length,
             validCount: validation.validCount,
@@ -328,10 +328,10 @@ const validateMd5ArrayContent = (req, res, next) => {
             url: req.originalUrl
           });
           
-          return res.status(HTTP_STATUS.BAD_REQUEST).json({
+            return res.status(HTTP_STATUS.BAD_REQUEST).json({
             success: false,
-            error: ERROR_CODES.INVALID_MD5_FORMAT,
-            message: `${fieldName}包含无效的MD5值`,
+              error: ERROR_CODES.INVALID_FINGERPRINT_FORMAT,
+              message: `${fieldName}包含无效的指纹值`,
             details: {
               totalCount: array.length,
               validCount: validation.validCount,
@@ -349,7 +349,7 @@ const validateMd5ArrayContent = (req, res, next) => {
     next();
     
   } catch (error) {
-    logger.error('MD5数组内容验证异常', {
+    logger.error('指纹数组内容验证异常', {
       error: error.message,
       url: req.originalUrl,
       userKey: req.userKey ? UserKeyUtils.toShortId(req.userKey) : 'unknown'
@@ -358,7 +358,7 @@ const validateMd5ArrayContent = (req, res, next) => {
     return res.status(HTTP_STATUS.INTERNAL_ERROR).json({
       success: false,
       error: 'VALIDATION_ERROR',
-      message: 'MD5数组验证过程中发生错误'
+      message: '指纹数组验证过程中发生错误'
     });
   }
 };
@@ -396,8 +396,8 @@ const validateRequestSize = (req, res, next) => {
 module.exports = {
   handleValidationErrors,
   validateUserKey,
-  validateMd5,
-  validateMd5Array,
+  validateFingerprint,
+  validateFingerprintArray,
   validateBatchInfo,
   validateCollectionHash,
   validateCount,
@@ -408,6 +408,6 @@ module.exports = {
   validatePullDiffPage,
   validateBidirectionalDiff,
   validateBatchAdd,
-  validateMd5ArrayContent,
+  validateFingerprintArrayContent,
   validateRequestSize
 };

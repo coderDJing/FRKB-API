@@ -1,13 +1,13 @@
-# FRKB-API：MD5集合同步系统
+# FRKB-API：指纹（SHA256）集合同步系统
 
 ## 项目简介
 
-FRKB-API 是一个高性能的MD5集合同步系统，用于在Electron客户端和Node.js服务端之间同步大量MD5数据。本后端服务用于为 Electron 前端项目 FRKB Rapid Audio Organization Tool 提供接口支持（仓库：[`FRKB_Rapid-Audio-Organization-Tool`](https://github.com/coderDJing/FRKB_Rapid-Audio-Organization-Tool)）。
+FRKB-API 是一个高性能的指纹（SHA256）集合同步系统，用于在 Electron 客户端和 Node.js 服务端之间同步大量指纹数据。本后端服务用于为 Electron 前端项目 FRKB Rapid Audio Organization Tool 提供接口支持（仓库：[`FRKB_Rapid-Audio-Organization-Tool`](https://github.com/coderDJing/FRKB_Rapid-Audio-Organization-Tool)）。
 
 ### 核心特性
 
-- ✅ **双向同步**：客户端与服务端MD5集合完全一致
-- ✅ **高性能**：支持4-5万MD5数据，10用户并发
+- ✅ **双向同步**：客户端与服务端指纹集合完全一致
+- ✅ **高性能**：支持 4-5 万指纹数据，10 用户并发
 - ✅ **安全认证**：API密钥 + userKey白名单三重验证
 - ✅ **批处理**：智能分批传输，减少网络开销
 - ✅ **只增不减**：服务端数据永远合并，保证完整性
@@ -189,7 +189,7 @@ node cli/admin.js --help
 
 ## API使用示例（精简）
 
-- 前缀：`/frkbapi/v1/md5-sync`
+- 前缀：`/frkbapi/v1/fingerprint-sync`
 - 认证：请求头 `Authorization: Bearer <API_SECRET_KEY>`
 
 常用端点：
@@ -201,7 +201,7 @@ node cli/admin.js --help
 
 最小示意：
 ```javascript
-await fetch('/frkbapi/v1/md5-sync/check', {
+await fetch('/frkbapi/v1/fingerprint-sync/check', {
   method: 'POST',
   headers: {
     Authorization: 'Bearer <API_SECRET_KEY>',
@@ -215,7 +215,7 @@ await fetch('/frkbapi/v1/md5-sync/check', {
 
 ## 性能指标
 
-- **数据量**：单用户4-5万MD5值
+- **数据量**：单用户 4-5 万指纹
 - **响应时间**：预检查 < 100ms，差异计算 < 1s
 - **并发能力**：支持10用户同时同步
 - **网络优化**：相比全量传输减少80%+流量

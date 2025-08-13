@@ -44,15 +44,15 @@ module.exports = {
     INVALID_USER_KEY: 'INVALID_USER_KEY',
     USER_KEY_NOT_FOUND: 'USER_KEY_NOT_FOUND',
     INVALID_API_KEY: 'INVALID_API_KEY',
-    INVALID_MD5_FORMAT: 'INVALID_MD5_FORMAT',
+    INVALID_FINGERPRINT_FORMAT: 'INVALID_FINGERPRINT_FORMAT',
     BATCH_SIZE_EXCEEDED: 'BATCH_SIZE_EXCEEDED',
     SYNC_IN_PROGRESS: 'SYNC_IN_PROGRESS',
     DATABASE_ERROR: 'DATABASE_ERROR',
     RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED'
   },
 
-  // MD5格式验证
-  MD5_REGEX: /^[a-f0-9]{32}$/i,
+  // 指纹格式验证（统一 64 位十六进制 SHA256）
+  FINGERPRINT_REGEX: /^[a-f0-9]{64}$/i,
 
   // userKey格式验证 (UUID v4)
   USER_KEY_REGEX: /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
@@ -67,7 +67,7 @@ module.exports = {
 
   // 数据库集合名称
   COLLECTIONS: {
-    USER_MD5: 'user_md5_collections',
+    USER_FINGERPRINTS: 'user_fingerprint_collections',
     USER_META: 'user_collection_metas',
     AUTH_KEYS: 'authorized_user_keys'
   },

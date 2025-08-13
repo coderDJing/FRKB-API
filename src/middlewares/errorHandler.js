@@ -152,6 +152,7 @@ const errorHandler = (error, req, res, next) => {
     success: false,
     error: errorCode,
     message,
+    ...(details && Object.keys(details).length > 0 ? { details } : {}),
     timestamp: new Date().toISOString()
   };
 

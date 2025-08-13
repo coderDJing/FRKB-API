@@ -7,7 +7,7 @@ FRKB-API/
 ├── src/
 │   ├── app.js               # Express 应用与全局中间件
 │   ├── config/              # 数据库与常量
-│   ├── models/              # Mongoose 模型（UserMd5Collection / UserCollectionMeta / AuthorizedUserKey）
+│   ├── models/              # Mongoose 模型（UserFingerprintCollection / UserCollectionMeta / AuthorizedUserKey）
 │   ├── routes/              # 路由（前缀：/frkbapi/v1）
 │   ├── controllers/         # 控制器
 │   ├── services/            # 业务服务（同步/缓存/布隆）
@@ -18,7 +18,7 @@ FRKB-API/
 ```
 
 ## 关键约定
-- API 前缀：`/frkbapi/v1`；同步路由基座：`/md5-sync`
+- API 前缀：`/frkbapi/v1`；同步路由基座：`/fingerprint-sync`
 - 认证：`Authorization: Bearer <API_SECRET_KEY>` + `userKey` 白名单
 - 幂等：批量新增使用唯一索引保证幂等
 

@@ -8,7 +8,7 @@ require('dotenv').config();
 // 导入模型和工具
 const { connectDB, closeDB } = require('../src/config/database');
 const AuthorizedUserKey = require('../src/models/AuthorizedUserKey');
-const UserMd5Collection = require('../src/models/UserMd5Collection');
+const UserFingerprintCollection = require('../src/models/UserFingerprintCollection');
 const UserCollectionMeta = require('../src/models/UserCollectionMeta');
 const UserKeyUtils = require('../src/utils/userKeyUtils');
 const HashUtils = require('../src/utils/hashUtils');
@@ -76,10 +76,7 @@ async function createUserKey(options) {
   const createOptions = {
     description: options.desc || options.description || '通过CLI创建',
     createdBy: options.by || process.env.USER || 'admin',
-    notes: options.notes || '',
-    canSync: options.noSync ? false : true,
-    canQuery: options.noQuery ? false : true,
-    dailyRequestLimit: parseInt(options.dailyLimit) || 0
+    notes: options.notes || ''
   };
   
   // 按业务约定：userKey 永不过期（不支持 --expires）
@@ -93,9 +90,6 @@ async function createUserKey(options) {
     console.log(`   UUID: ${result.userKey}`);
     console.log(`   描述: ${createOptions.description}`);
     console.log(`   创建者: ${createOptions.createdBy}`);
-    console.log(`   同步权限: ${createOptions.canSync ? '✅' : '❌'}`);
-    console.log(`   查询权限: ${createOptions.canQuery ? '✅' : '❌'}`);
-    console.log(`   每日限制: ${createOptions.dailyRequestLimit || '无限制'}`);
     
     console.log(`   过期时间: 永不过期`);
     
@@ -210,19 +204,19 @@ async function showUserKey(userKeyOrShortId) {
   }
   
   // 获取使用统计
-  const md5Stats = await UserMd5Collection.aggregate([
+  const fpStats = await UserFingerprintCollection.aggregate([
     { $match: { userKey: userKey.userKey } },
     {
       $group: {
         _id: null,
-        totalMd5s: { $sum: 1 },
-        oldestMd5: { $min: '$createdAt' },
-        newestMd5: { $max: '$createdAt' }
+        totalFingerprints: { $sum: 1 },
+        oldest: { $min: '$createdAt' },
+        newest: { $max: '$createdAt' }
       }
     }
   ]);
   
-  const md5Info = md5Stats[0] || { totalMd5s: 0, oldestMd5: null, newestMd5: null };
+  const fpInfo = fpStats[0] || { totalFingerprints: 0, oldest: null, newest: null };
   
   // 显示详细信息
   console.log('\n📋 userKey详细信息:\n');
@@ -235,10 +229,7 @@ async function showUserKey(userKeyOrShortId) {
   
   console.log(`⏰ 过期时间: 永不过期`);
   
-  console.log('\n🔐 权限配置:');
-  console.log(`   同步权限: ${userKey.permissions.canSync ? '✅' : '❌'}`);
-  console.log(`   查询权限: ${userKey.permissions.canQuery ? '✅' : '❌'}`);
-  console.log(`   每日限制: ${userKey.permissions.dailyRequestLimit || '无限制'}`);
+  // 已移除细粒度权限配置显示
   
   console.log('\n📊 使用统计:');
   console.log(`   总请求数: ${userKey.usageStats.totalRequests}`);
@@ -247,12 +238,12 @@ async function showUserKey(userKeyOrShortId) {
   console.log(`   最后IP: ${userKey.usageStats.lastIpAddress || 'N/A'}`);
   
   console.log('\n📦 数据统计:');
-  console.log(`   MD5数量: ${md5Info.totalMd5s}`);
-  if (md5Info.oldestMd5) {
-    console.log(`   最早数据: ${md5Info.oldestMd5.toISOString()}`);
+  console.log(`   指纹数量: ${fpInfo.totalFingerprints}`);
+  if (fpInfo.oldest) {
+    console.log(`   最早数据: ${fpInfo.oldest.toISOString()}`);
   }
-  if (md5Info.newestMd5) {
-    console.log(`   最新数据: ${md5Info.newestMd5.toISOString()}`);
+  if (fpInfo.newest) {
+    console.log(`   最新数据: ${fpInfo.newest.toISOString()}`);
   }
   
   if (userKey.notes) {
@@ -308,15 +299,15 @@ async function getSystemStatus() {
   // 并行查询各种统计信息
   const [
     userKeyStats,
-    md5Stats,
+    fpStats,
     metaStats
   ] = await Promise.all([
     AuthorizedUserKey.getUsageStats(),
-    UserMd5Collection.aggregate([
+    UserFingerprintCollection.aggregate([
       {
         $group: {
           _id: null,
-          totalMd5s: { $sum: 1 },
+          totalFingerprints: { $sum: 1 },
           uniqueUsers: { $addToSet: '$userKey' }
         }
       }
@@ -326,16 +317,16 @@ async function getSystemStatus() {
         $group: {
           _id: null,
           totalMetas: { $sum: 1 },
-          totalMd5Count: { $sum: '$totalCount' },
-          avgMd5Count: { $avg: '$totalCount' },
+          totalFingerprintCount: { $sum: '$totalCount' },
+          avgFingerprintCount: { $avg: '$totalCount' },
           lastSync: { $max: '$lastSyncAt' }
         }
       }
     ])
   ]);
   
-  const md5Info = md5Stats[0] || { totalMd5s: 0, uniqueUsers: [] };
-  const metaInfo = metaStats[0] || { totalMetas: 0, totalMd5Count: 0, avgMd5Count: 0, lastSync: null };
+  const aggInfo = fpStats[0] || { totalFingerprints: 0, uniqueUsers: [] };
+  const metaInfo = metaStats[0] || { totalMetas: 0, totalFingerprintCount: 0, avgFingerprintCount: 0, lastSync: null };
   
   console.log('\n🏥 系统健康状态:\n');
   
@@ -352,12 +343,12 @@ async function getSystemStatus() {
   console.log(`   总同步数: ${userKeyStats.totalSyncs}`);
   console.log(`   最后使用: ${userKeyStats.lastUsed ? userKeyStats.lastUsed.toISOString() : 'N/A'}`);
   
-  // MD5数据统计
+  // 指纹数据统计
   console.log('\n📦 数据统计:');
-  console.log(`   总MD5数量: ${md5Info.totalMd5s.toLocaleString()}`);
-  console.log(`   有数据用户: ${md5Info.uniqueUsers.length}`);
+  console.log(`   总指纹数量: ${aggInfo.totalFingerprints.toLocaleString()}`);
+  console.log(`   有数据用户: ${aggInfo.uniqueUsers.length}`);
   console.log(`   元数据记录: ${metaInfo.totalMetas}`);
-  console.log(`   平均MD5数: ${Math.round(metaInfo.avgMd5Count).toLocaleString()}`);
+  console.log(`   平均指纹数: ${Math.round(metaInfo.avgFingerprintCount).toLocaleString()}`);
   console.log(`   最后同步: ${metaInfo.lastSync ? metaInfo.lastSync.toISOString() : 'N/A'}`);
   
   // 系统资源
@@ -408,10 +399,10 @@ async function cleanupExpiredData(options) {
 }
 
 /**
- * 清理无效数据：无主MD5、无主/空的元数据
- * - 无主 MD5: 在 AuthorizedUserKey 中不存在的 userKey 对应的数据
+ * 清理无效数据：无主指纹、无主/空的元数据
+ * - 无主 指纹: 在 AuthorizedUserKey 中不存在的 userKey 对应的指纹数据
  * - 无主 meta: 在 AuthorizedUserKey 中不存在的 userKey 的 meta
- * - 空 meta: totalCount=0 且 lastSyncAt=null，且该 userKey 在 MD5 集合中数量为 0
+ * - 空 meta: totalCount=0 且 lastSyncAt=null，且该 userKey 在指纹集合中数量为 0
  */
 async function cleanupInvalidData(options) {
   const preview = !!options.preview;
@@ -420,8 +411,8 @@ async function cleanupInvalidData(options) {
 
   console.log('🧽 正在清理无效数据...');
 
-  // 1) 无主 MD5（聚合找出无主的 userKey 列表）
-  const orphanMd5Users = await UserMd5Collection.aggregate([
+  // 1) 无主指纹（聚合找出无主的 userKey 列表）
+  const orphanFingerprintUsers = await UserFingerprintCollection.aggregate([
     {
       $lookup: {
         from: AuthorizedUserKey.collection.name,
@@ -434,19 +425,19 @@ async function cleanupInvalidData(options) {
     { $group: { _id: '$userKey', count: { $sum: 1 } } }
   ]);
 
-  let orphanMd5Removed = 0;
-  if (orphanMd5Users.length > 0) {
-    console.log(`🔎 发现 ${orphanMd5Users.length} 个无主 userKey 的 MD5 数据`);
+  let orphanFingerprintRemoved = 0;
+  if (orphanFingerprintUsers.length > 0) {
+    console.log(`🔎 发现 ${orphanFingerprintUsers.length} 个无主 userKey 的指纹数据`);
     if (!preview) {
-      for (const u of orphanMd5Users) {
-        const res = await UserMd5Collection.deleteMany({ userKey: u._id });
-        orphanMd5Removed += res.deletedCount || 0;
+      for (const u of orphanFingerprintUsers) {
+        const res = await UserFingerprintCollection.deleteMany({ userKey: u._id });
+        orphanFingerprintRemoved += res.deletedCount || 0;
       }
     } else {
-      orphanMd5Removed = orphanMd5Users.reduce((s, u) => s + u.count, 0);
+      orphanFingerprintRemoved = orphanFingerprintUsers.reduce((s, u) => s + u.count, 0);
     }
   } else {
-    console.log('✅ 未发现无主 MD5 数据');
+    console.log('✅ 未发现无主指纹数据');
   }
 
   // 2) 无主 meta
@@ -487,10 +478,10 @@ async function cleanupInvalidData(options) {
   let emptyMetaRemoved = 0;
   if (emptyMetaCandidates.length > 0) {
     console.log(`🔎 发现 ${emptyMetaCandidates.length} 个疑似空 meta（> ${emptyMetaDays} 天）`);
-    // 逐个确认该 userKey 在 MD5 集合中是否确实为 0
+    // 逐个确认该 userKey 在指纹集合中是否确实为 0
     for (const meta of emptyMetaCandidates) {
-      const md5Count = await UserMd5Collection.countDocuments({ userKey: meta.userKey });
-      if (md5Count === 0) {
+      const fingerprintCount = await UserFingerprintCollection.countDocuments({ userKey: meta.userKey });
+      if (fingerprintCount === 0) {
         if (!preview) {
           const res = await UserCollectionMeta.deleteOne({ userKey: meta.userKey });
           emptyMetaRemoved += res.deletedCount || 0;
@@ -504,12 +495,12 @@ async function cleanupInvalidData(options) {
   }
 
   console.log('🧾 清理汇总:');
-  console.log(`   无主 MD5 删除: ${orphanMd5Removed}`);
+  console.log(`   无主 指纹 删除: ${orphanFingerprintRemoved}`);
   console.log(`   无主 meta 删除: ${orphanMetaRemoved}`);
   console.log(`   空 meta 删除: ${emptyMetaRemoved}`);
 
   logger.admin('CLI清理无效数据', {
-    orphanMd5Removed,
+    orphanFingerprintRemoved,
     orphanMetaRemoved,
     emptyMetaRemoved,
     preview,
@@ -528,9 +519,7 @@ program
   .option('--description <description>', '用户描述（完整参数名）')
   .option('-b, --by <creator>', '创建者')
   .option('-n, --notes <notes>', '备注信息')
-  .option('--no-sync', '禁用同步权限')
-  .option('--no-query', '禁用查询权限')
-  .option('--daily-limit <number>', '每日请求限制')
+  // 已移除细粒度权限与日配额相关选项
   .action(withErrorHandling(createUserKey));
 
 // 列出userKey命令
@@ -576,7 +565,7 @@ program
 // 清理命令
 program
   .command('cleanup')
-  .description('清理过期与无效数据（过期userKey、无主MD5、无主/空meta）')
+  .description('清理过期与无效数据（过期userKey、无主指纹、无主/空meta）')
   .option('--skip-user-keys', '跳过过期 userKey 清理')
   .option('--empty-meta-days <number>', '空 meta 保留天数（默认 7）', '7')
   .option('--preview', '仅预览待清理数量，不执行删除')
@@ -595,13 +584,10 @@ program
 
 🔑 创建userKey:
    node cli/admin.js create --desc "张三的客户端"
-   node cli/admin.js create --desc "测试账号" --expires 30
-   node cli/admin.js create --desc "只读账号" --no-sync --daily-limit 100
 
 📋 查看userKey:
    node cli/admin.js list
    node cli/admin.js list --active
-   node cli/admin.js list --expired --limit 10
    node cli/admin.js show 550e8400
    node cli/admin.js show 550e8400-e29b-41d4-a716-446655440000
 

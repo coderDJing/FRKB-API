@@ -1,5 +1,5 @@
 const express = require('express');
-const md5SyncRoutes = require('./md5Sync');
+const fingerprintRoutes = require('./fingerprint');
 const healthRoutes = require('./health');
 const logger = require('../utils/logger');
 
@@ -14,23 +14,24 @@ const router = express.Router();
 router.get('/', (req, res) => {
   res.json({
     success: true,
-    message: '🚀 FRKB API v1 - MD5集合同步系统',
+    message: '🚀 FRKB API v1 - 指纹集合同步系统 (SHA256)',
     version: '1.0.0',
     environment: process.env.NODE_ENV,
     timestamp: new Date().toISOString(),
     
     endpoints: {
-      // MD5同步相关接口
+      // 指纹同步相关接口
       sync: {
-        check: 'POST /frkbapi/v1/md5-sync/check - 同步预检查',
-        bidirectionalDiff: 'POST /frkbapi/v1/md5-sync/bidirectional-diff - 双向差异检测',
-        add: 'POST /frkbapi/v1/md5-sync/add - 批量添加MD5',
-        pullDiffPage: 'POST /frkbapi/v1/md5-sync/pull-diff-page - 分页拉取差异数据',
-        analyzeDiff: 'POST /frkbapi/v1/md5-sync/analyze-diff - 完整差异分析',
-        status: 'GET /frkbapi/v1/md5-sync/status?userKey=xxx - 获取同步状态',
-        serviceStats: 'GET /frkbapi/v1/md5-sync/service-stats - 服务统计',
-        clearCache: 'DELETE /frkbapi/v1/md5-sync/cache/:userKey - 清除用户缓存',
-        forceUnlock: 'DELETE /frkbapi/v1/md5-sync/lock/:userKey - 强制释放同步锁'
+        check: 'POST /frkbapi/v1/fingerprint-sync/check - 同步预检查',
+        validateUserKey: 'POST /frkbapi/v1/fingerprint-sync/validate-user-key - 仅校验 userKey 是否有效',
+        bidirectionalDiff: 'POST /frkbapi/v1/fingerprint-sync/bidirectional-diff - 双向差异检测',
+        add: 'POST /frkbapi/v1/fingerprint-sync/add - 批量添加指纹',
+        pullDiffPage: 'POST /frkbapi/v1/fingerprint-sync/pull-diff-page - 分页拉取差异数据',
+        analyzeDiff: 'POST /frkbapi/v1/fingerprint-sync/analyze-diff - 完整差异分析',
+        status: 'GET /frkbapi/v1/fingerprint-sync/status?userKey=xxx - 获取同步状态',
+        serviceStats: 'GET /frkbapi/v1/fingerprint-sync/service-stats - 服务统计',
+        clearCache: 'DELETE /frkbapi/v1/fingerprint-sync/cache/:userKey - 清除用户缓存',
+        forceUnlock: 'DELETE /frkbapi/v1/fingerprint-sync/lock/:userKey - 强制释放同步锁'
       },
       
       // 健康检查接口
@@ -69,8 +70,8 @@ router.use((req, res, next) => {
   next();
 });
 
-// MD5同步路由
-router.use('/md5-sync', md5SyncRoutes);
+// 指纹同步路由
+router.use('/fingerprint-sync', fingerprintRoutes);
 
 // 健康检查路由
 router.use('/health', healthRoutes);
@@ -90,7 +91,7 @@ router.use('*', (req, res) => {
     message: `API路由不存在: ${req.method} ${req.originalUrl}`,
     suggestion: '请检查请求路径和方法是否正确',
     availableEndpoints: {
-      md5Sync: '/frkbapi/v1/md5-sync/*',
+      fingerprintSync: '/frkbapi/v1/fingerprint-sync/*',
       health: '/frkbapi/v1/health/*'
     },
     timestamp: new Date().toISOString()

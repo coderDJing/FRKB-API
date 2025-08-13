@@ -1,5 +1,5 @@
 const { v4: uuidv4 } = require('uuid');
-const UserMd5Collection = require('../models/UserMd5Collection');
+const UserFingerprintCollection = require('../models/UserFingerprintCollection');
 const UserCollectionMeta = require('../models/UserCollectionMeta');
 const HashUtils = require('../utils/hashUtils');
 const UserKeyUtils = require('../utils/userKeyUtils');
@@ -11,7 +11,7 @@ const { BATCH_CONFIG, SYNC_CONFIG, HTTP_STATUS } = require('../config/constants'
 
 /**
  * 同步服务
- * 核心业务逻辑：处理MD5集合的双向同步
+ * 核心业务逻辑：处理指纹（SHA256）集合的双向同步
  */
 class SyncService {
   constructor() {
@@ -25,7 +25,7 @@ class SyncService {
    * 同步预检查
    * 快速判断是否需要同步，避免不必要的数据传输
    * @param {string} userKey - 用户密钥
-   * @param {number} clientCount - 客户端MD5数量
+   * @param {number} clientCount - 客户端指纹数量
    * @param {string} clientHash - 客户端集合哈希
    * @returns {Promise<Object>} 预检查结果
    */
@@ -103,11 +103,49 @@ class SyncService {
         result.reason = 'count_mismatch';
         result.message = `数量不匹配：服务端${serverMeta.totalCount}，客户端${clientCount}`;
       }
-      // 哈希不同
+      // 哈希不同（数量相等时进行二次校验，避免因元数据/缓存滞后造成误判）
       else if (serverMeta.collectionHash !== clientHash) {
-        result.needSync = true;
-        result.reason = 'hash_mismatch';
-        result.message = '集合哈希不匹配，内容有差异';
+        if (serverMeta.totalCount === clientCount) {
+          logger.debug('检测到数量相等但哈希不一致，触发二次校验', {
+            userKey: UserKeyUtils.toShortId(userKey),
+            cachedServerHash: (serverMeta.collectionHash || '').substring(0, 16) + '...',
+            clientHash: (clientHash || '').substring(0, 16) + '...'
+          });
+
+          try {
+            // 实时重算服务端集合哈希并更新元数据
+            const refreshedMeta = await UserCollectionMeta.updateForUser(userKey, {});
+
+            // 清理相关缓存，确保后续读取为最新
+            cacheService.clearUserCache(userKey);
+
+            result.serverCount = refreshedMeta.totalCount;
+            result.serverHash = refreshedMeta.collectionHash;
+            result.lastSyncAt = refreshedMeta.lastSyncAt;
+
+            if (refreshedMeta.collectionHash === clientHash) {
+              result.needSync = false;
+              result.reason = 'already_synced';
+              result.message = '数据已同步，无需操作';
+            } else {
+              result.needSync = true;
+              result.reason = 'hash_mismatch';
+              result.message = '集合哈希不匹配，内容有差异';
+            }
+          } catch (recalcError) {
+            logger.warn('二次校验失败，回退为hash不一致', {
+              userKey: UserKeyUtils.toShortId(userKey),
+              error: recalcError.message
+            });
+            result.needSync = true;
+            result.reason = 'hash_mismatch';
+            result.message = '集合哈希不匹配，内容有差异';
+          }
+        } else {
+          result.needSync = true;
+          result.reason = 'hash_mismatch';
+          result.message = '集合哈希不匹配，内容有差异';
+        }
       }
       // 完全一致
       else {
@@ -142,74 +180,74 @@ class SyncService {
    * 双向差异检测
    * 分析客户端和服务端的差异，支持分批处理
    * @param {string} userKey - 用户密钥
-   * @param {string[]} clientMd5s - 客户端MD5数组（当前批次）
+   * @param {string[]} clientFingerprints - 客户端指纹数组（当前批次）
    * @param {number} batchIndex - 批次索引
    * @param {number} batchSize - 批次大小
    * @returns {Promise<Object>} 差异检测结果
    */
-  async bidirectionalDiff(userKey, clientMd5s, batchIndex, batchSize) {
+  async bidirectionalDiff(userKey, clientFingerprints, batchIndex, batchSize) {
     const startTime = Date.now();
     
     try {
       logger.sync(userKey, 'bidirectional_diff_start', {
         batchIndex,
         batchSize,
-        clientMd5Count: clientMd5s.length
+        clientCount: clientFingerprints.length
       });
 
-      // 验证MD5数组
-      const validation = HashUtils.validateMd5Array(clientMd5s);
+      // 验证指纹数组
+      const validation = HashUtils.validateFingerprintArray(clientFingerprints);
       if (!validation.valid) {
-        throw new Error(`批次${batchIndex}包含无效MD5: ${validation.invalidItems.length}个`);
+        throw new Error(`批次${batchIndex}包含无效指纹: ${validation.invalidItems.length}个`);
       }
 
-      const normalizedClientMd5s = validation.validItems;
+      const normalizedClientFingerprints = validation.validItems;
 
       // 使用布隆过滤器快速过滤（如果启用）
       let bloomResult = null;
       if (bloomFilterService.enabled) {
-        bloomResult = await bloomFilterService.batchMightContain(userKey, normalizedClientMd5s);
+        bloomResult = await bloomFilterService.batchMightContain(userKey, normalizedClientFingerprints);
         
-        // 过滤掉不可能存在的MD5，减少数据库查询
-        const possibleMd5s = bloomResult.possible
+        // 过滤掉不可能存在的指纹，减少数据库查询
+         const possibleFingerprints = bloomResult.possible
           .filter(item => item.possible)
-          .map(item => item.md5);
+          .map(item => item.fingerprint || item);
         
         logger.debug('布隆过滤器预过滤', {
           userKey: UserKeyUtils.toShortId(userKey),
-          originalCount: normalizedClientMd5s.length,
-          filteredCount: possibleMd5s.length,
-          filteredRatio: `${((normalizedClientMd5s.length - possibleMd5s.length) / normalizedClientMd5s.length * 100).toFixed(1)}%`
+          originalCount: normalizedClientFingerprints.length,
+          filteredCount: possibleFingerprints.length,
+          filteredRatio: `${((normalizedClientFingerprints.length - possibleFingerprints.length) / Math.max(normalizedClientFingerprints.length,1) * 100).toFixed(1)}%`
         });
       }
 
-      // 查询服务端存在的MD5
-      const existingMd5s = await UserMd5Collection.checkMd5Exists(
-        userKey, 
-        normalizedClientMd5s
+      // 查询服务端存在的指纹
+      const existingDocs = await UserFingerprintCollection.checkFingerprintExists(
+        userKey,
+        normalizedClientFingerprints
       );
-      const existingSet = new Set(existingMd5s.map(doc => doc.md5));
+      const existingSet = new Set(existingDocs.map(doc => doc.fingerprint));
 
       // 计算差异
-      const serverMissingMd5s = normalizedClientMd5s.filter(md5 => !existingSet.has(md5));
-      const serverExistingMd5s = normalizedClientMd5s.filter(md5 => existingSet.has(md5));
+      const serverMissingFingerprints = normalizedClientFingerprints.filter(fp => !existingSet.has(fp));
+      const serverExistingFingerprints = normalizedClientFingerprints.filter(fp => existingSet.has(fp));
 
-      // 如果是第一个批次，初始化会话来处理客户端缺失的MD5
+      // 如果是第一个批次，初始化会话来处理客户端缺失的指纹
       let sessionInfo = null;
       if (batchIndex === 0) {
-        // 获取服务端的MD5总数（用于估算客户端缺失数量）
+        // 获取服务端的指纹总数（用于估算客户端缺失数量）
         const serverMeta = await UserCollectionMeta.getOrCreate(userKey);
         const serverTotalCount = serverMeta.totalCount;
         
-        // 估算客户端缺失的MD5数量
-        const estimatedClientMissing = Math.max(0, serverTotalCount - clientMd5s.length);
+        // 估算客户端缺失的指纹数量
+        const estimatedClientMissing = Math.max(0, serverTotalCount - clientFingerprints.length);
         
         if (estimatedClientMissing > 0) {
           sessionInfo = {
             sessionId: `diff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
             userKey,
             createdAt: new Date(),
-            clientTotalEstimate: clientMd5s.length * (batchSize > 0 ? Math.ceil(clientMd5s.length / batchSize) : 1),
+            clientTotalEstimate: clientFingerprints.length * (batchSize > 0 ? Math.ceil(clientFingerprints.length / batchSize) : 1),
             serverTotalCount,
             estimatedMissing: estimatedClientMissing,
             processed: false
@@ -223,12 +261,12 @@ class SyncService {
       const result = {
         batchIndex,
         batchSize,
-        serverMissingMd5s,
-        serverExistingMd5s,
+        serverMissingFingerprints,
+        serverExistingFingerprints,
         counts: {
-          clientBatch: normalizedClientMd5s.length,
-          serverMissing: serverMissingMd5s.length,
-          serverExisting: serverExistingMd5s.length
+          clientBatch: normalizedClientFingerprints.length,
+          serverMissing: serverMissingFingerprints.length,
+          serverExisting: serverExistingFingerprints.length
         },
         sessionInfo,
         bloomFilterStats: bloomResult?.summary,
@@ -239,8 +277,8 @@ class SyncService {
 
       logger.sync(userKey, 'bidirectional_diff_complete', {
         batchIndex,
-        serverMissing: serverMissingMd5s.length,
-        serverExisting: serverExistingMd5s.length,
+        serverMissing: serverMissingFingerprints.length,
+        serverExisting: serverExistingFingerprints.length,
         sessionCreated: !!sessionInfo,
         duration: `${Date.now() - startTime}ms`
       });
@@ -261,13 +299,13 @@ class SyncService {
   }
 
   /**
-   * 批量添加MD5
-   * 将客户端的新MD5添加到服务端
+   * 批量添加指纹
+   * 将客户端的新指纹添加到服务端
    * @param {string} userKey - 用户密钥
-   * @param {string[]} addMd5s - 要添加的MD5数组
+   * @param {string[]} addFingerprints - 要添加的指纹数组
    * @returns {Promise<Object>} 添加结果
    */
-  async batchAddMd5s(userKey, addMd5s) {
+  async batchAddFingerprints(userKey, addFingerprints) {
     const startTime = Date.now();
     
     try {
@@ -275,19 +313,19 @@ class SyncService {
       await this.acquireSyncLock(userKey, 'batch_add');
       
       logger.sync(userKey, 'batch_add_start', {
-        count: addMd5s.length
+        count: addFingerprints.length
       });
 
-      // 验证MD5数组
-      const validation = HashUtils.validateMd5Array(addMd5s);
+      // 验证指纹数组
+      const validation = HashUtils.validateFingerprintArray(addFingerprints);
       if (!validation.valid) {
-        throw new Error(`包含无效MD5: ${validation.invalidItems.length}个`);
+        throw new Error(`包含无效指纹: ${validation.invalidItems.length}个`);
       }
 
-      const normalizedMd5s = validation.validItems;
+      const normalizedFingerprints = validation.validItems;
 
       // 批量添加到数据库
-      const addResult = await UserMd5Collection.addBatch(userKey, normalizedMd5s);
+      const addResult = await UserFingerprintCollection.addBatch(userKey, normalizedFingerprints);
 
       // 更新用户元数据
       const updateResult = { added: addResult.insertedCount, duration: Date.now() - startTime };
@@ -295,7 +333,7 @@ class SyncService {
 
       // 更新布隆过滤器
       if (bloomFilterService.enabled && addResult.insertedCount > 0) {
-        await bloomFilterService.addMd5s(userKey, normalizedMd5s);
+        await bloomFilterService.addFingerprints(userKey, normalizedFingerprints);
       }
 
       // 清除相关缓存
@@ -305,7 +343,7 @@ class SyncService {
         success: true,
         addedCount: addResult.insertedCount,
         duplicateCount: addResult.duplicateCount,
-        totalRequested: normalizedMd5s.length,
+        totalRequested: normalizedFingerprints.length,
         performance: {
           addDuration: Date.now() - startTime
         }
@@ -320,9 +358,9 @@ class SyncService {
       return result;
 
     } catch (error) {
-      logger.error('批量添加MD5失败', {
+      logger.error('批量添加指纹失败', {
         userKey: UserKeyUtils.toShortId(userKey),
-        count: addMd5s?.length || 0,
+        count: addFingerprints?.length || 0,
         error: error.message,
         stack: error.stack,
         duration: `${Date.now() - startTime}ms`
@@ -337,8 +375,8 @@ class SyncService {
   }
 
   /**
-   * 分页获取差异MD5
-   * 获取客户端缺失的MD5数据
+   * 分页获取差异指纹
+   * 获取客户端缺失的指纹数据
    * @param {string} userKey - 用户密钥
    * @param {string} sessionId - 差异会话ID
    * @param {number} pageIndex - 页码
@@ -356,37 +394,52 @@ class SyncService {
       // 获取会话信息
       const sessionInfo = cacheService.getDiffSession(sessionId);
       if (!sessionInfo) {
-        throw new Error('差异会话已过期或不存在');
+        const err = new Error('差异会话已过期或不存在');
+        err.status = HTTP_STATUS.NOT_FOUND;
+        err.code = 'DIFF_SESSION_NOT_FOUND';
+        err.details = { retryAfter: SYNC_CONFIG.DIFF_SESSION_TTL };
+        throw err;
       }
 
       if (sessionInfo.userKey !== userKey) {
-        throw new Error('会话用户不匹配');
+        const err = new Error('会话用户不匹配');
+        err.status = HTTP_STATUS.FORBIDDEN;
+        err.code = 'DIFF_SESSION_USER_MISMATCH';
+        throw err;
       }
 
+      // 基于 missingInClient 进行分页，确保同一会话内稳定
       const pageSize = SYNC_CONFIG.DEFAULT_PAGE_SIZE;
-      const skip = pageIndex * pageSize;
+      const totalArray = Array.isArray(sessionInfo.missingInClient)
+        ? sessionInfo.missingInClient
+        : [];
 
-      // 分页获取服务端MD5
-      const md5Docs = await UserMd5Collection
-        .find({ userKey })
-        .select('md5')
-        .sort({ createdAt: 1 })
-        .skip(skip)
-        .limit(pageSize)
-        .lean();
+      // 按 fingerprint 升序稳定排序（可缓存回会话，避免重复排序）
+      let sortedMissing = sessionInfo.sortedMissingInClient;
+      if (!Array.isArray(sortedMissing)) {
+        sortedMissing = [...totalArray].map(m => String(m).toLowerCase()).sort();
+        // 回写缓存（默认TTL），便于后续分页无需重复排序
+        try {
+          const updated = { ...sessionInfo, sortedMissingInClient: sortedMissing };
+          cacheService.setDiffSession(sessionId, updated);
+        } catch (_) {
+          // 忽略缓存写入失败
+        }
+      }
 
-      const missingMd5s = md5Docs.map(doc => doc.md5);
-      
-      // 获取总页数
-      const totalCount = await UserMd5Collection.getUserMd5Count(userKey);
-      const totalPages = Math.ceil(totalCount / pageSize);
-      const hasMore = pageIndex < totalPages - 1;
+      const totalCount = sortedMissing.length;
+      const totalPages = Math.ceil(totalCount / pageSize) || 1;
+      const safePageIndex = Math.max(0, Math.min(pageIndex, Math.max(totalPages - 1, 0)));
+      const start = safePageIndex * pageSize;
+      const end = start + pageSize;
+      const missingFingerprints = sortedMissing.slice(start, end);
+      const hasMore = safePageIndex < totalPages - 1;
 
       const result = {
         sessionId,
-        missingMd5s,
+        missingFingerprints,
         pageInfo: {
-          currentPage: pageIndex,
+          currentPage: safePageIndex,
           pageSize,
           totalPages,
           hasMore,
@@ -400,7 +453,7 @@ class SyncService {
       logger.sync(userKey, 'pull_diff_page_complete', {
         sessionId: sessionId.substring(0, 16) + '...',
         pageIndex,
-        returnedCount: missingMd5s.length,
+        returnedCount: missingFingerprints.length,
         hasMore,
         duration: `${Date.now() - startTime}ms`
       });
@@ -408,7 +461,7 @@ class SyncService {
       return result;
 
     } catch (error) {
-      logger.error('分页获取差异MD5失败', {
+      logger.error('分页获取差异指纹失败', {
         userKey: UserKeyUtils.toShortId(userKey),
         sessionId: sessionId?.substring(0, 16) + '...',
         pageIndex,
@@ -423,36 +476,36 @@ class SyncService {
 
   /**
    * 完整的差异分析
-   * 分析客户端和服务端的完整差异（适用于客户端发送完整MD5列表的场景）
+   * 分析客户端和服务端的完整差异（适用于客户端发送完整指纹列表的场景）
    * @param {string} userKey - 用户密钥
-   * @param {string[]} clientMd5s - 客户端完整MD5数组
+   * @param {string[]} clientFingerprints - 客户端完整指纹数组
    * @returns {Promise<Object>} 差异分析结果
    */
-  async analyzeDifference(userKey, clientMd5s) {
+  async analyzeDifference(userKey, clientFingerprints) {
     const startTime = Date.now();
     
     try {
       logger.sync(userKey, 'analyze_diff_start', {
-        clientCount: clientMd5s.length
+        clientCount: clientFingerprints.length
       });
 
-      // 验证MD5数组
-      const validation = HashUtils.validateMd5Array(clientMd5s);
+      // 验证指纹数组
+      const validation = HashUtils.validateFingerprintArray(clientFingerprints);
       if (!validation.valid) {
-        throw new Error(`包含无效MD5: ${validation.invalidItems.length}个`);
+        throw new Error(`包含无效指纹: ${validation.invalidItems.length}个`);
       }
 
-      const normalizedClientMd5s = validation.validItems;
+      const normalizedClientFingerprints = validation.validItems;
 
       // 获取服务端和客户端的差异
-      const diffResult = await UserMd5Collection.findMissingMd5s(userKey, normalizedClientMd5s);
+      const diffResult = await UserFingerprintCollection.findMissingFingerprints(userKey, normalizedClientFingerprints);
 
       // 创建差异会话
       const sessionId = `diff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       const sessionData = {
         sessionId,
         userKey,
-        clientMd5s: normalizedClientMd5s,
+        clientFingerprints: normalizedClientFingerprints,
         missingInClient: diffResult.missingInClient,
         missingInServer: diffResult.missingInServer,
         totalClient: diffResult.totalClient,
@@ -476,7 +529,7 @@ class SyncService {
           pageSize
         },
         serverStats: {
-          totalMd5Count: diffResult.totalServer,
+          totalFingerprintCount: diffResult.totalServer,
           clientCurrentCount: diffResult.totalClient
         },
         recommendations: this.generateSyncRecommendations(diffResult),
@@ -484,6 +537,24 @@ class SyncService {
           analysisDuration: Date.now() - startTime
         }
       };
+
+      // 若判定“无差异”，刷新元数据（重算集合哈希并清缓存），确保后续 /check 立即一致
+      if (diffResult.missingInClient.length === 0 && diffResult.missingInServer.length === 0) {
+        try {
+          const refreshedMeta = await UserCollectionMeta.updateForUser(userKey, {});
+          cacheService.clearUserCache(userKey);
+          logger.debug('无差异分析后已刷新元数据', {
+            userKey: UserKeyUtils.toShortId(userKey),
+            totalCount: refreshedMeta.totalCount,
+            collectionHash: (refreshedMeta.collectionHash || '').substring(0, 16) + '...'
+          });
+        } catch (metaError) {
+          logger.warn('无差异分析后刷新元数据失败（忽略，不影响本次响应）', {
+            userKey: UserKeyUtils.toShortId(userKey),
+            error: metaError.message
+          });
+        }
+      }
 
       logger.sync(userKey, 'analyze_diff_complete', {
         sessionId: sessionId.substring(0, 16) + '...',
@@ -497,7 +568,7 @@ class SyncService {
     } catch (error) {
       logger.error('差异分析失败', {
         userKey: UserKeyUtils.toShortId(userKey),
-        clientCount: clientMd5s?.length || 0,
+        clientCount: clientFingerprints?.length || 0,
         error: error.message,
         stack: error.stack,
         duration: `${Date.now() - startTime}ms`
@@ -537,7 +608,7 @@ class SyncService {
 
     // 估算时间
     const totalOperations = missingInClient.length + missingInServer.length;
-    const estimatedSeconds = Math.ceil(totalOperations / 1000) * 2; // 假设每1000个MD5需要2秒
+    const estimatedSeconds = Math.ceil(totalOperations / 1000) * 2; // 假设每1000个指纹需要2秒
     recommendations.estimatedTime = `约${estimatedSeconds}秒`;
 
     return recommendations;

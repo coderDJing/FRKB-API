@@ -2,14 +2,14 @@
 
 ## 同步算法概述
 
-双向同步算法确保客户端和服务端的MD5集合最终完全一致，采用"只增不减"策略保证数据完整性。
+双向同步算法确保客户端和服务端的指纹集合（SHA256）最终完全一致，采用“只增不减”策略保证数据完整性。
 
 ### 核心原理
 
 ```
 同步前：
-客户端: [A, B, C, D]      (4万个MD5)
-服务端: [B, C, E, F, G]   (5万个MD5)
+客户端: [A, B, C, D]      (4万个指纹)
+服务端: [B, C, E, F, G]   (5万个指纹)
 
 算法处理：
 1. 找出客户端独有: [A, D]
@@ -17,8 +17,8 @@
 3. 双向传输: 客户端获取[E,F,G]，服务端获取[A,D]
 
 同步后：
-客户端: [A, B, C, D, E, F, G]  (6万个MD5)
-服务端: [A, B, C, D, E, F, G]  (6万个MD5)
+客户端: [A, B, C, D, E, F, G]  (6万个指纹)
+服务端: [A, B, C, D, E, F, G]  (6万个指纹)
 ```
 
 ## 完整同步流程
@@ -26,13 +26,13 @@
 ### 1. 预检查阶段
 
 ```javascript
-async function preCheckSync(userKey, clientMd5Array) {
-  // 1. 计算客户端集合哈希
-  const clientHash = calculateSetHash(clientMd5Array);
-  const clientCount = clientMd5Array.length;
+async function preCheckSync(userKey, clientFingerprintArray) {
+  // 1. 计算客户端集合哈希（指纹集合，SHA256）
+  const clientHash = calculateSetHash(clientFingerprintArray);
+  const clientCount = clientFingerprintArray.length;
   
   // 2. 获取服务端信息
-  const serverCount = await UserMd5Collection.countDocuments({ userKey });
+  const serverCount = await UserFingerprintCollection.countDocuments({ userKey });
   
   if (serverCount === 0) {
     return {
@@ -43,11 +43,11 @@ async function preCheckSync(userKey, clientMd5Array) {
   }
   
   // 3. 计算服务端集合哈希
-  const serverMd5s = await UserMd5Collection
+  const serverFps = await UserFingerprintCollection
     .find({ userKey })
-    .select('md5Hash')
+    .select('fingerprint')
     .lean();
-  const serverHash = calculateSetHash(serverMd5s.map(doc => doc.md5Hash));
+  const serverHash = calculateSetHash(serverFps.map(doc => doc.fingerprint));
   
   // 4. 比较哈希值
   if (clientHash === serverHash) {
@@ -105,41 +105,41 @@ function determineStrategy(clientCount, serverCount) {
 #### 双向差异检测算法
 
 ```javascript
-async function bidirectionalDiffAlgorithm(userKey, clientMd5Array) {
-  console.log(`🔄 开始双向差异检测: 客户端${clientMd5Array.length}个MD5`);
+async function bidirectionalDiffAlgorithm(userKey, clientFingerprintArray) {
+  console.log(`🔄 开始双向差异检测: 客户端${clientFingerprintArray.length}个指纹`);
   
   const BATCH_SIZE = 1000;
   const missingOnClient = new Set();
   const missingOnServer = new Set();
   
   // 1. 获取完整的服务端数据
-  const allServerMd5s = await UserMd5Collection
+  const allServerFps = await UserFingerprintCollection
     .find({ userKey })
-    .select('md5Hash')
+    .select('fingerprint')
     .lean();
   
-  const serverMd5Set = new Set(allServerMd5s.map(doc => doc.md5Hash));
-  const clientMd5Set = new Set(clientMd5Array);
+  const serverFingerprintSet = new Set(allServerFps.map(doc => doc.fingerprint));
+  const clientFingerprintSet = new Set(clientFingerprintArray);
   
-  console.log(`📊 服务端${serverMd5Set.size}个MD5，客户端${clientMd5Set.size}个MD5`);
+  console.log(`📊 服务端${serverFingerprintSet.size}个指纹，客户端${clientFingerprintSet.size}个指纹`);
   
-  // 2. 找出服务端独有的MD5（客户端需要拉取）
-  for (const serverMd5 of serverMd5Set) {
-    if (!clientMd5Set.has(serverMd5)) {
-      missingOnClient.add(serverMd5);
+  // 2. 找出服务端独有的指纹（客户端需要拉取）
+  for (const serverFp of serverFingerprintSet) {
+    if (!clientFingerprintSet.has(serverFp)) {
+      missingOnClient.add(serverFp);
     }
   }
   
-  // 3. 分批处理客户端MD5，找出服务端缺失的
-  for (let i = 0; i < clientMd5Array.length; i += BATCH_SIZE) {
-    const batch = clientMd5Array.slice(i, i + BATCH_SIZE);
+  // 3. 分批处理客户端指纹，找出服务端缺失的
+  for (let i = 0; i < clientFingerprintArray.length; i += BATCH_SIZE) {
+    const batch = clientFingerprintArray.slice(i, i + BATCH_SIZE);
     
     // 使用布隆过滤器优化（如果可用）
-    const batchMissingOnServer = await findMissingInServer(userKey, batch, serverMd5Set);
+    const batchMissingOnServer = await findMissingInServer(userKey, batch, serverFingerprintSet);
     
-    batchMissingOnServer.forEach(md5 => missingOnServer.add(md5));
+    batchMissingOnServer.forEach(fp => missingOnServer.add(fp));
     
-    console.log(`📈 进度: ${Math.min(i + BATCH_SIZE, clientMd5Array.length)}/${clientMd5Array.length}`);
+    console.log(`📈 进度: ${Math.min(i + BATCH_SIZE, clientFingerprintArray.length)}/${clientFingerprintArray.length}`);
   }
   
   const result = {
@@ -148,7 +148,7 @@ async function bidirectionalDiffAlgorithm(userKey, clientMd5Array) {
     summary: {
       clientNeedsPull: missingOnClient.size,
       serverNeedsPush: missingOnServer.size,
-      totalAfterSync: serverMd5Set.size + missingOnServer.size
+      totalAfterSync: serverFingerprintSet.size + missingOnServer.size
     }
   };
   
@@ -158,30 +158,30 @@ async function bidirectionalDiffAlgorithm(userKey, clientMd5Array) {
 }
 
 // 优化的服务端缺失检测
-async function findMissingInServer(userKey, clientBatch, serverMd5Set) {
+async function findMissingInServer(userKey, clientBatch, serverFingerprintSet) {
   // 方法1：直接使用内存中的Set（推荐，性能最好）
-  if (serverMd5Set) {
-    return clientBatch.filter(md5 => !serverMd5Set.has(md5));
+  if (serverFingerprintSet) {
+    return clientBatch.filter(fp => !serverFingerprintSet.has(fp));
   }
   
   // 方法2：使用布隆过滤器 + 数据库查询
   const bloomFilter = await bloomFilterService.getOrCreate(userKey);
   
   // 布隆过滤器快速筛选
-  const possibleMissing = clientBatch.filter(md5 => !bloomFilter.has(md5));
+  const possibleMissing = clientBatch.filter(fp => !bloomFilter.has(fp));
   
   if (possibleMissing.length === 0) {
     return [];
   }
   
   // 精确查询
-  const existing = await UserMd5Collection.find({
+  const existing = await UserFingerprintCollection.find({
     userKey,
-    md5Hash: { $in: possibleMissing }
-  }).select('md5Hash').lean();
+    fingerprint: { $in: possibleMissing }
+  }).select('fingerprint').lean();
   
-  const existingSet = new Set(existing.map(doc => doc.md5Hash));
-  return possibleMissing.filter(md5 => !existingSet.has(md5));
+  const existingSet = new Set(existing.map(doc => doc.fingerprint));
+  return possibleMissing.filter(fp => !existingSet.has(fp));
 }
 ```
 
@@ -190,26 +190,26 @@ async function findMissingInServer(userKey, clientBatch, serverMd5Set) {
 #### 客户端拉取算法
 
 ```javascript
-async function pullMissingData(userKey, missingMd5Array) {
-  console.log(`📥 开始拉取${missingMd5Array.length}个缺失的MD5`);
+async function pullMissingData(userKey, missingFingerprintArray) {
+  console.log(`📥 开始拉取${missingFingerprintArray.length}个缺失的指纹`);
   
   const BATCH_SIZE = 1000;
   const pulledData = [];
   
-  for (let i = 0; i < missingMd5Array.length; i += BATCH_SIZE) {
-    const batch = missingMd5Array.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < missingFingerprintArray.length; i += BATCH_SIZE) {
+    const batch = missingFingerprintArray.slice(i, i + BATCH_SIZE);
     
     try {
-      // 从服务端获取这批MD5数据
-      const batchData = await UserMd5Collection.find({
+      // 从服务端获取这批指纹数据
+      const batchData = await UserFingerprintCollection.find({
         userKey,
-        md5Hash: { $in: batch }
-      }).select('md5Hash').lean();
+        fingerprint: { $in: batch }
+      }).select('fingerprint').lean();
       
-      const batchMd5s = batchData.map(doc => doc.md5Hash);
-      pulledData.push(...batchMd5s);
+      const batchFingerprints = batchData.map(doc => doc.fingerprint);
+      pulledData.push(...batchFingerprints);
       
-      console.log(`📥 拉取进度: ${Math.min(i + BATCH_SIZE, missingMd5Array.length)}/${missingMd5Array.length}`);
+      console.log(`📥 拉取进度: ${Math.min(i + BATCH_SIZE, missingFingerprintArray.length)}/${missingFingerprintArray.length}`);
       
     } catch (error) {
       console.error(`❌ 拉取批次${i}-${i + BATCH_SIZE}失败:`, error.message);
@@ -217,7 +217,7 @@ async function pullMissingData(userKey, missingMd5Array) {
     }
   }
   
-  console.log(`✅ 拉取完成: 成功获取${pulledData.length}个MD5`);
+  console.log(`✅ 拉取完成: 成功获取${pulledData.length}个指纹`);
   return pulledData;
 }
 ```
@@ -225,24 +225,24 @@ async function pullMissingData(userKey, missingMd5Array) {
 #### 服务端推送算法
 
 ```javascript
-async function pushMissingData(userKey, missingMd5Array) {
-  console.log(`📤 开始推送${missingMd5Array.length}个缺失的MD5到服务端`);
+async function pushMissingData(userKey, missingFingerprintArray) {
+  console.log(`📤 开始推送${missingFingerprintArray.length}个缺失的指纹到服务端`);
   
   const BATCH_SIZE = 1000;
   let totalPushed = 0;
   
-  for (let i = 0; i < missingMd5Array.length; i += BATCH_SIZE) {
-    const batch = missingMd5Array.slice(i, i + BATCH_SIZE);
+  for (let i = 0; i < missingFingerprintArray.length; i += BATCH_SIZE) {
+    const batch = missingFingerprintArray.slice(i, i + BATCH_SIZE);
     
     try {
       // 批量upsert操作
-      const operations = batch.map(md5Hash => ({
+      const operations = batch.map(fp => ({
         updateOne: {
-          filter: { userKey, md5Hash },
+          filter: { userKey, fingerprint: fp },
           update: { 
             $setOnInsert: { 
               userKey, 
-              md5Hash, 
+              fingerprint: fp, 
               createdAt: new Date() 
             }
           },
@@ -250,13 +250,13 @@ async function pushMissingData(userKey, missingMd5Array) {
         }
       }));
       
-      const result = await UserMd5Collection.bulkWrite(operations, {
+      const result = await UserFingerprintCollection.bulkWrite(operations, {
         ordered: false // 允许并发，提高性能
       });
       
       totalPushed += result.upsertedCount;
       
-      console.log(`📤 推送进度: ${Math.min(i + BATCH_SIZE, missingMd5Array.length)}/${missingMd5Array.length} (新增${result.upsertedCount})`);
+      console.log(`📤 推送进度: ${Math.min(i + BATCH_SIZE, missingFingerprintArray.length)}/${missingFingerprintArray.length} (新增${result.upsertedCount})`);
       
     } catch (error) {
       console.error(`❌ 推送批次${i}-${i + BATCH_SIZE}失败:`, error.message);
@@ -264,7 +264,7 @@ async function pushMissingData(userKey, missingMd5Array) {
     }
   }
   
-  console.log(`✅ 推送完成: 成功新增${totalPushed}个MD5到服务端`);
+  console.log(`✅ 推送完成: 成功新增${totalPushed}个指纹到服务端`);
   return totalPushed;
 }
 ```
@@ -272,20 +272,20 @@ async function pushMissingData(userKey, missingMd5Array) {
 ### 5. 完整同步实现
 
 ```javascript
-async function completeBidirectionalSync(userKey, clientMd5Array) {
+async function completeBidirectionalSync(userKey, clientFingerprintArray) {
   const startTime = Date.now();
-  console.log(`🚀 开始完整双向同步: userKey=${userKey}, 客户端MD5数量=${clientMd5Array.length}`);
+  console.log(`🚀 开始完整双向同步: userKey=${userKey}, 客户端指纹数量=${clientFingerprintArray.length}`);
   
   try {
     // 1. 预检查
-    const preCheck = await preCheckSync(userKey, clientMd5Array);
+    const preCheck = await preCheckSync(userKey, clientFingerprintArray);
     
     if (!preCheck.needSync) {
       console.log('✅ 数据已同步，无需处理');
       return {
         success: true,
         message: '数据已同步',
-        finalMd5Array: clientMd5Array,
+        finalFingerprintArray: clientFingerprintArray,
         stats: {
           pulled: 0,
           pushed: 0,
@@ -297,28 +297,28 @@ async function completeBidirectionalSync(userKey, clientMd5Array) {
     console.log(`📋 同步策略: ${preCheck.strategy}`);
     
     // 2. 根据策略执行同步
-    let finalMd5Array = [...clientMd5Array];
+    let finalFingerprintArray = [...clientFingerprintArray];
     let pullCount = 0;
     let pushCount = 0;
     
     if (preCheck.strategy === 'first_upload') {
       // 首次上传：直接推送所有客户端数据
-      pushCount = await pushMissingData(userKey, clientMd5Array);
+      pushCount = await pushMissingData(userKey, clientFingerprintArray);
       
     } else if (preCheck.strategy === 'pull_all') {
       // 全量拉取：客户端为空，拉取所有服务端数据
       const allServerData = await pullAllServerData(userKey);
-      finalMd5Array = allServerData;
+      finalFingerprintArray = allServerData;
       pullCount = allServerData.length;
       
     } else {
       // 双向差异同步
-      const diffResult = await bidirectionalDiffAlgorithm(userKey, clientMd5Array);
+      const diffResult = await bidirectionalDiffAlgorithm(userKey, clientFingerprintArray);
       
       // 3. 客户端拉取服务端独有的数据
       if (diffResult.missingOnClient.length > 0) {
         const pulledData = await pullMissingData(userKey, diffResult.missingOnClient);
-        finalMd5Array.push(...pulledData);
+        finalFingerprintArray.push(...pulledData);
         pullCount = pulledData.length;
       }
       
@@ -329,23 +329,23 @@ async function completeBidirectionalSync(userKey, clientMd5Array) {
     }
     
     // 5. 去重并排序
-    finalMd5Array = [...new Set(finalMd5Array)];
+    finalFingerprintArray = [...new Set(finalFingerprintArray)];
     
     // 6. 更新用户集合元信息
-    await updateUserCollectionMeta(userKey, finalMd5Array);
+    await updateUserCollectionMeta(userKey, finalFingerprintArray);
     
     const syncTime = Date.now() - startTime;
     
     console.log(`🎉 双向同步完成！`);
-    console.log(`📊 最终统计: MD5总数=${finalMd5Array.length}, 拉取=${pullCount}, 推送=${pushCount}`);
+  console.log(`📊 最终统计: 指纹总数=${finalFingerprintArray.length}, 拉取=${pullCount}, 推送=${pushCount}`);
     console.log(`⏱️ 同步耗时: ${syncTime}ms`);
     
     return {
       success: true,
       message: '双向同步完成',
-      finalMd5Array,
+      finalFingerprintArray,
       stats: {
-        finalCount: finalMd5Array.length,
+        finalCount: finalFingerprintArray.length,
         pulled: pullCount,
         pushed: pushCount,
         syncTime
@@ -359,14 +359,14 @@ async function completeBidirectionalSync(userKey, clientMd5Array) {
 }
 
 // 更新用户集合元信息
-async function updateUserCollectionMeta(userKey, md5Array) {
-  const collectionHash = calculateSetHash(md5Array);
+async function updateUserCollectionMeta(userKey, fingerprintArray) {
+  const collectionHash = calculateSetHash(fingerprintArray);
   
   await UserCollectionMeta.updateOne(
     { userKey },
     {
       userKey,
-      totalCount: md5Array.length,
+      totalCount: fingerprintArray.length,
       collectionHash,
       lastSyncAt: new Date(),
       updatedAt: new Date()
@@ -385,18 +385,18 @@ async function incrementalSyncByTimestamp(userKey, lastSyncTime) {
   console.log(`⏰ 基于时间戳的增量同步: lastSyncTime=${lastSyncTime}`);
   
   // 获取指定时间后的新增数据
-  const newServerData = await UserMd5Collection.find({
+  const newServerData = await UserFingerprintCollection.find({
     userKey,
     createdAt: { $gt: new Date(lastSyncTime) }
-  }).select('md5Hash createdAt').lean();
+  }).select('fingerprint createdAt').lean();
   
-  const newMd5s = newServerData.map(doc => doc.md5Hash);
+  const newFingerprints = newServerData.map(doc => doc.fingerprint);
   
-  console.log(`📥 时间戳增量同步: 发现${newMd5s.length}个新MD5`);
+  console.log(`📥 时间戳增量同步: 发现${newFingerprints.length}个新指纹`);
   
   return {
-    newMd5s,
-    count: newMd5s.length,
+    newFingerprints,
+    count: newFingerprints.length,
     syncStrategy: 'timestamp_incremental'
   };
 }
@@ -405,10 +405,10 @@ async function incrementalSyncByTimestamp(userKey, lastSyncTime) {
 ### 基于版本号的增量同步
 
 ```javascript
-// 为每个MD5记录添加版本号
-const userMd5Schema = new mongoose.Schema({
+// 为每条指纹记录添加版本号
+const userFingerprintSchema = new mongoose.Schema({
   userKey: String,
-  md5Hash: String,
+  fingerprint: String,
   version: {
     type: Number,
     default: 1,
@@ -421,13 +421,13 @@ async function incrementalSyncByVersion(userKey, clientVersion) {
   console.log(`🔢 基于版本号的增量同步: clientVersion=${clientVersion}`);
   
   // 获取版本号大于客户端版本的数据
-  const newServerData = await UserMd5Collection.find({
+  const newServerData = await UserFingerprintCollection.find({
     userKey,
     version: { $gt: clientVersion }
-  }).select('md5Hash version').lean();
+  }).select('fingerprint version').lean();
   
   const updates = newServerData.map(doc => ({
-    md5Hash: doc.md5Hash,
+    fingerprint: doc.fingerprint,
     version: doc.version
   }));
   
@@ -454,7 +454,7 @@ class OptimizedDiffAlgorithm {
     this.bloomFilters = new Map();
   }
   
-  async optimizedBidirectionalDiff(userKey, clientMd5Batch) {
+  async optimizedBidirectionalDiff(userKey, clientFingerprintBatch) {
     const startTime = Date.now();
     
     // 1. 获取或创建布隆过滤器
@@ -467,30 +467,30 @@ class OptimizedDiffAlgorithm {
     
     // 2. 布隆过滤器快速筛选
     const filterStartTime = Date.now();
-    const possibleMissing = clientMd5Batch.filter(md5 => !bloomFilter.has(md5));
+    const possibleMissing = clientFingerprintBatch.filter(fp => !bloomFilter.has(fp));
     const filterTime = Date.now() - filterStartTime;
     
-    console.log(`⚡ 布隆过滤器筛选: ${clientMd5Batch.length} → ${possibleMissing.length} (${filterTime}ms)`);
+    console.log(`⚡ 布隆过滤器筛选: ${clientFingerprintBatch.length} → ${possibleMissing.length} (${filterTime}ms)`);
     
     // 3. 精确数据库查询
     const dbStartTime = Date.now();
     const actualMissing = [];
     
     if (possibleMissing.length > 0) {
-      const existing = await UserMd5Collection.find({
+      const existing = await UserFingerprintCollection.find({
         userKey,
-        md5Hash: { $in: possibleMissing }
-      }).select('md5Hash').lean();
+        fingerprint: { $in: possibleMissing }
+      }).select('fingerprint').lean();
       
-      const existingSet = new Set(existing.map(doc => doc.md5Hash));
-      actualMissing.push(...possibleMissing.filter(md5 => !existingSet.has(md5)));
+      const existingSet = new Set(existing.map(doc => doc.fingerprint));
+      actualMissing.push(...possibleMissing.filter(fp => !existingSet.has(fp)));
     }
     
     const dbTime = Date.now() - dbStartTime;
     const totalTime = Date.now() - startTime;
     
     console.log(`🗄️ 数据库查询: ${possibleMissing.length} → ${actualMissing.length} (${dbTime}ms)`);
-    console.log(`📊 性能优化效果: 总耗时${totalTime}ms, 数据库查询减少${Math.round((1 - possibleMissing.length / clientMd5Batch.length) * 100)}%`);
+    console.log(`📊 性能优化效果: 总耗时${totalTime}ms, 数据库查询减少${Math.round((1 - possibleMissing.length / clientFingerprintBatch.length) * 100)}%`);
     
     return {
       missingOnServer: actualMissing,
@@ -498,7 +498,7 @@ class OptimizedDiffAlgorithm {
         totalTime,
         filterTime,
         dbTime,
-        reductionRate: (1 - possibleMissing.length / clientMd5Batch.length) * 100
+        reductionRate: (1 - possibleMissing.length / clientFingerprintBatch.length) * 100
       }
     };
   }
@@ -506,17 +506,17 @@ class OptimizedDiffAlgorithm {
   async rebuildBloomFilter(userKey) {
     console.log(`🔨 重建布隆过滤器: ${userKey}`);
     
-    const allMd5s = await UserMd5Collection
+    const allFps = await UserFingerprintCollection
       .find({ userKey })
-      .select('md5Hash')
+      .select('fingerprint')
       .lean();
     
-    const md5Array = allMd5s.map(doc => doc.md5Hash);
-    const bloomFilter = BloomFilter.create(Math.max(md5Array.length, 1000), 0.01);
+    const fingerprintArray = allFps.map(doc => doc.fingerprint);
+    const bloomFilter = BloomFilter.create(Math.max(fingerprintArray.length, 1000), 0.01);
     
-    md5Array.forEach(md5 => bloomFilter.add(md5));
+    fingerprintArray.forEach(fp => bloomFilter.add(fp));
     
-    console.log(`✅ 布隆过滤器重建完成: ${md5Array.length}个MD5`);
+    console.log(`✅ 布隆过滤器重建完成: ${fingerprintArray.length}个指纹`);
     return bloomFilter;
   }
   
@@ -536,17 +536,17 @@ class ConcurrentSyncAlgorithm {
     this.runningTasks = new Map();
   }
   
-  async processConcurrentBatches(userKey, md5Array) {
+  async processConcurrentBatches(userKey, fingerprintArray) {
     const BATCH_SIZE = 1000;
     const batches = [];
     
     // 1. 分割数据为批次
-    for (let i = 0; i < md5Array.length; i += BATCH_SIZE) {
+    for (let i = 0; i < fingerprintArray.length; i += BATCH_SIZE) {
       batches.push({
         index: Math.floor(i / BATCH_SIZE),
-        data: md5Array.slice(i, i + BATCH_SIZE),
+        data: fingerprintArray.slice(i, i + BATCH_SIZE),
         startIndex: i,
-        endIndex: Math.min(i + BATCH_SIZE, md5Array.length)
+        endIndex: Math.min(i + BATCH_SIZE, fingerprintArray.length)
       });
     }
     
@@ -563,7 +563,7 @@ class ConcurrentSyncAlgorithm {
         const result = await this.processBatch(userKey, batch);
         results[batch.index] = result;
         
-        console.log(`✅ 批次${batch.index}完成: ${batch.data.length}个MD5`);
+        console.log(`✅ 批次${batch.index}完成: ${batch.data.length}个指纹`);
         return result;
         
       } finally {
@@ -576,7 +576,7 @@ class ConcurrentSyncAlgorithm {
     // 3. 合并结果
     const mergedResult = this.mergeResults(results);
     
-    console.log(`🎉 并发处理完成: 总计${mergedResult.totalProcessed}个MD5`);
+    console.log(`🎉 并发处理完成: 总计${mergedResult.totalProcessed}个指纹`);
     
     return mergedResult;
   }
@@ -589,25 +589,25 @@ class ConcurrentSyncAlgorithm {
       batchIndex: batch.index,
       processed: batch.data.length,
       missing: missingOnServer.length,
-      missingMd5s: missingOnServer
+      missingFingerprints: missingOnServer
     };
   }
   
   mergeResults(results) {
-    const allMissingMd5s = [];
+    const allMissingFingerprints = [];
     let totalProcessed = 0;
     
     results.forEach(result => {
       if (result) {
         totalProcessed += result.processed;
-        allMissingMd5s.push(...result.missingMd5s);
+        allMissingFingerprints.push(...result.missingFingerprints);
       }
     });
     
     return {
       totalProcessed,
-      totalMissing: allMissingMd5s.length,
-      missingMd5s: allMissingMd5s
+      totalMissing: allMissingFingerprints.length,
+      missingFingerprints: allMissingFingerprints
     };
   }
 }
@@ -653,14 +653,14 @@ class RetryableSync {
     this.baseDelay = 1000; // 1秒
   }
   
-  async syncWithRetry(userKey, clientMd5Array) {
+  async syncWithRetry(userKey, clientFingerprintArray) {
     let lastError;
     
     for (let attempt = 1; attempt <= this.maxRetries; attempt++) {
       try {
         console.log(`🔄 同步尝试 ${attempt}/${this.maxRetries}`);
         
-        const result = await completeBidirectionalSync(userKey, clientMd5Array);
+        const result = await completeBidirectionalSync(userKey, clientFingerprintArray);
         
         console.log(`✅ 同步成功 (尝试${attempt}次)`);
         return result;
@@ -701,7 +701,7 @@ class ResumableSync {
     this.checkpoints = new Map();
   }
   
-  async syncWithCheckpoints(userKey, clientMd5Array) {
+  async syncWithCheckpoints(userKey, clientFingerprintArray) {
     const sessionId = this.generateSessionId();
     console.log(`🔄 开始可恢复同步: sessionId=${sessionId}`);
     
@@ -712,15 +712,15 @@ class ResumableSync {
       
       if (lastCheckpoint && this.isValidCheckpoint(lastCheckpoint)) {
         startIndex = lastCheckpoint.processedCount;
-        console.log(`📍 从检查点恢复: 已处理${startIndex}个MD5`);
+        console.log(`📍 从检查点恢复: 已处理${startIndex}个指纹`);
       }
       
       // 2. 分批处理，定期保存检查点
       const BATCH_SIZE = 1000;
       const results = [];
       
-      for (let i = startIndex; i < clientMd5Array.length; i += BATCH_SIZE) {
-        const batch = clientMd5Array.slice(i, i + BATCH_SIZE);
+      for (let i = startIndex; i < clientFingerprintArray.length; i += BATCH_SIZE) {
+        const batch = clientFingerprintArray.slice(i, i + BATCH_SIZE);
         
         try {
           const batchResult = await this.processBatchWithCheckpoint(
@@ -737,7 +737,7 @@ class ResumableSync {
             sessionId,
             processedCount: i + batch.length,
             timestamp: Date.now(),
-            totalCount: clientMd5Array.length
+            totalCount: clientFingerprintArray.length
           });
           
         } catch (error) {
@@ -806,8 +806,8 @@ class ResumableSync {
  * 算法复杂度分析
  * 
  * 设：
- * - n = 客户端MD5数量
- * - m = 服务端MD5数量
+ * - n = 客户端指纹数量
+ * - m = 服务端指纹数量
  * - k = 批次大小 (通常为1000)
  * 
  * 1. 朴素算法（无优化）:
@@ -838,30 +838,30 @@ class PerformanceBenchmark {
     const testSizes = [1000, 5000, 10000, 50000];
     
     for (const size of testSizes) {
-      console.log(`📊 性能测试: ${size}个MD5`);
+      console.log(`📊 性能测试: ${size}个指纹`);
       
-      const clientMd5s = this.generateTestMd5s(size);
-      const serverMd5s = this.generateTestMd5s(size * 0.8); // 80%重叠
+      const clientFingerprints = this.generateTestFingerprints(size);
+      const serverFingerprints = this.generateTestFingerprints(size * 0.8); // 80%重叠
       
       // 测试不同算法
       const results = await Promise.all([
-        this.benchmarkNaiveAlgorithm(clientMd5s, serverMd5s),
-        this.benchmarkOptimizedAlgorithm(clientMd5s, serverMd5s),
-        this.benchmarkBloomFilterAlgorithm(clientMd5s, serverMd5s)
+        this.benchmarkNaiveAlgorithm(clientFingerprints, serverFingerprints),
+        this.benchmarkOptimizedAlgorithm(clientFingerprints, serverFingerprints),
+        this.benchmarkBloomFilterAlgorithm(clientFingerprints, serverFingerprints)
       ]);
       
       this.printBenchmarkResults(size, results);
     }
   }
   
-  async benchmarkNaiveAlgorithm(clientMd5s, serverMd5s) {
+  async benchmarkNaiveAlgorithm(clientFingerprints, serverFingerprints) {
     const startTime = Date.now();
     
     // 朴素O(n*m)算法
     const missing = [];
-    for (const clientMd5 of clientMd5s) {
-      if (!serverMd5s.includes(clientMd5)) {
-        missing.push(clientMd5);
+    for (const clientFp of clientFingerprints) {
+      if (!serverFingerprints.includes(clientFp)) {
+        missing.push(clientFp);
       }
     }
     
@@ -872,12 +872,12 @@ class PerformanceBenchmark {
     };
   }
   
-  async benchmarkOptimizedAlgorithm(clientMd5s, serverMd5s) {
+  async benchmarkOptimizedAlgorithm(clientFingerprints, serverFingerprints) {
     const startTime = Date.now();
     
     // 优化的O(n+m)算法
-    const serverSet = new Set(serverMd5s);
-    const missing = clientMd5s.filter(md5 => !serverSet.has(md5));
+    const serverSet = new Set(serverFingerprints);
+    const missing = clientFingerprints.filter(fp => !serverSet.has(fp));
     
     return {
       algorithm: 'Optimized O(n+m)',
@@ -886,25 +886,25 @@ class PerformanceBenchmark {
     };
   }
   
-  async benchmarkBloomFilterAlgorithm(clientMd5s, serverMd5s) {
+  async benchmarkBloomFilterAlgorithm(clientFingerprints, serverFingerprints) {
     const startTime = Date.now();
     
     // 布隆过滤器算法
-    const bloomFilter = BloomFilter.create(serverMd5s.length, 0.01);
-    serverMd5s.forEach(md5 => bloomFilter.add(md5));
+    const bloomFilter = BloomFilter.create(serverFingerprints.length, 0.01);
+    serverFingerprints.forEach(fp => bloomFilter.add(fp));
     
-    const possibleMissing = clientMd5s.filter(md5 => !bloomFilter.has(md5));
+    const possibleMissing = clientFingerprints.filter(fp => !bloomFilter.has(fp));
     
     // 模拟数据库查询
-    const serverSet = new Set(serverMd5s);
-    const actualMissing = possibleMissing.filter(md5 => !serverSet.has(md5));
+    const serverSet = new Set(serverFingerprints);
+    const actualMissing = possibleMissing.filter(fp => !serverSet.has(fp));
     
     return {
       algorithm: 'Bloom Filter',
       time: Date.now() - startTime,
       missing: actualMissing.length,
       dbQueries: possibleMissing.length,
-      reduction: Math.round((1 - possibleMissing.length / clientMd5s.length) * 100)
+      reduction: Math.round((1 - possibleMissing.length / clientFingerprints.length) * 100)
     };
   }
 }

@@ -405,25 +405,25 @@ class CacheService {
   }
 
   /**
-   * 缓存MD5存在性检查结果
+  * 缓存指纹存在性检查结果
    * @param {string} userKey - 用户密钥
-   * @param {string} md5Hash - MD5数组的哈希
+  * @param {string} fingerprintsHash - 指纹数组的哈希
    * @param {Object} result - 检查结果
    * @param {number} ttl - 过期时间
    */
-  setMd5ExistCheck(userKey, md5Hash, result, ttl = 300000) { // 5分钟
-    const key = this.generateKey('md5_exist', userKey, md5Hash);
+  setFingerprintExistCheck(userKey, fingerprintsHash, result, ttl = 300000) { // 5分钟
+    const key = this.generateKey('fingerprint_exist', userKey, fingerprintsHash);
     return this.set(key, result, ttl);
   }
 
   /**
-   * 获取MD5存在性检查结果
+  * 获取指纹存在性检查结果
    * @param {string} userKey - 用户密钥
-   * @param {string} md5Hash - MD5数组的哈希
+  * @param {string} fingerprintsHash - 指纹数组的哈希
    * @returns {Object|null} 检查结果
    */
-  getMd5ExistCheck(userKey, md5Hash) {
-    const key = this.generateKey('md5_exist', userKey, md5Hash);
+  getFingerprintExistCheck(userKey, fingerprintsHash) {
+    const key = this.generateKey('fingerprint_exist', userKey, fingerprintsHash);
     return this.get(key);
   }
 
@@ -456,7 +456,7 @@ class CacheService {
   clearUserCache(userKey) {
     const shortUserKey = UserKeyUtils.toShortId(userKey);
     return this.deleteByPrefix(`user_meta:${shortUserKey}`) +
-           this.deleteByPrefix(`md5_exist:${shortUserKey}`) +
+           this.deleteByPrefix(`fingerprint_exist:${shortUserKey}`) +
            this.deleteByPrefix(`collection_hash:${shortUserKey}`);
   }
 

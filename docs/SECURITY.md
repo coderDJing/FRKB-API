@@ -4,8 +4,7 @@
 
 ## 验证与权限
 - API密钥：请求头 `Authorization: Bearer <API_SECRET_KEY>`，使用常量时间比较；必须配置 `API_SECRET_KEY`
-- userKey：UUID v4；格式校验 + 白名单校验（模型 `AuthorizedUserKey`）
-- 权限：按操作检查 `permissions.canSync`/`permissions.canQuery`
+- userKey：UUID v4；格式校验 + 白名单校验（模型 `AuthorizedUserKey`），仅启用/禁用
 - 频率限制：按路由使用不同策略（宽松/严格/同步专用），已启用
 
 ## 配置
