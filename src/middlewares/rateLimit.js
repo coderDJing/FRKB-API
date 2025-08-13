@@ -174,7 +174,7 @@ const relaxedRateLimit = rateLimit({
  */
 const syncRateLimit = rateLimit({
   windowMs: 1 * 60 * 1000, // 1分钟
-  max: 30, // 每分钟最多30次同步请求
+  max: 500, // 每分钟最多500次同步请求（适应大数据量同步）
   message: {
     success: false,
     error: 'SYNC_RATE_LIMIT_EXCEEDED',
@@ -221,9 +221,9 @@ const syncRateLimit = rateLimit({
       message: '同步请求过于频繁，请稍后再试',
       details: {
         windowMs: 1 * 60 * 1000,
-        maxRequests: 30,
+        maxRequests: 500,
         retryAfter: 60,
-        suggestion: '建议增加批次大小或减少同步频率'
+        suggestion: '大数据量同步时请适当降低并发请求频率'
       }
     });
   }

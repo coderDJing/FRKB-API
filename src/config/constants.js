@@ -5,9 +5,9 @@
 module.exports = {
   // 批处理配置
   BATCH_CONFIG: {
-    BATCH_SIZE: parseInt(process.env.BATCH_SIZE || '1000'),
-    MAX_CONCURRENT: parseInt(process.env.MAX_CONCURRENT_BATCHES || '2'),
-    TIMEOUT_PER_BATCH: parseInt(process.env.TIMEOUT_PER_BATCH || '30000'),
+    BATCH_SIZE: parseInt(process.env.BATCH_SIZE || '2000'),  // 增加到2000提高效率
+    MAX_CONCURRENT: parseInt(process.env.MAX_CONCURRENT_BATCHES || '4'),  // 允许更多并发
+    TIMEOUT_PER_BATCH: parseInt(process.env.TIMEOUT_PER_BATCH || '30000'),  // 增加超时时间
     RETRY_TIMES: parseInt(process.env.RETRY_TIMES || '3')
   },
 
