@@ -219,6 +219,19 @@ logger.startup = (message) => {
   });
 };
 
+// 管理员操作日志 - 单独记录管理员操作
+logger.admin = (operation, details = {}) => {
+  const adminLogData = {
+    category: 'ADMIN',
+    operation,
+    timestamp: new Date().toISOString(),
+    ...details
+  };
+  
+  // 管理员操作始终记录，不受精简模式影响
+  logger.warn(`🔧 管理员操作: ${operation}`, adminLogData);
+};
+
 // 同步操作日志 - 兼容原有接口但简化内容
 logger.sync = (userKey, operation, stats = {}) => {
   // 只记录重要的同步操作，跳过过于频繁的操作

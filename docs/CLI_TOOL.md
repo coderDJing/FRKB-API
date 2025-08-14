@@ -7,7 +7,6 @@
 - 创建 userKey（支持描述、权限、请求上限；不再支持过期时间）
 ```bash
 node cli/admin.js create-userkey --desc "张三的客户端"
-node cli/admin.js create-userkey --desc "只读账号" --no-sync --daily-limit 100
 ```
 
 - 列出 userKey（支持筛选与数量限制）
@@ -24,13 +23,30 @@ node cli/admin.js show-userkey <shortId|fullUUID>
 node cli/admin.js deactivate <shortId|fullUUID> --reason "用户要求删除"
 ```
 
+- 危险操作（需要 --confirm 确认）
+```bash
+# 完全删除 userKey 及其所有数据（不可恢复）
+node cli/admin.js delete-userkey <shortId|fullUUID> --confirm
+
+# 重置 userKey 数据，保留 userKey 但清空所有使用记录
+node cli/admin.js reset-userkey <shortId|fullUUID> --confirm --notes "重新开始"
+
+# 使用 --force 跳过5秒等待期
+node cli/admin.js delete <shortId|fullUUID> --confirm --force
+```
+
 - 系统维护
 ```bash
 node cli/admin.js status
 node cli/admin.js cleanup
 ```
 
-说明：命令实际以 `cli/admin.js` 为准；userKey 永不过期，如需停用请使用 deactivate。
+说明：
+- 命令实际以 `cli/admin.js` 为准；userKey 永不过期，如需停用请使用 deactivate
+- **危险操作说明**：
+  - `delete-userkey`: 完全删除 userKey 记录及所有相关数据，不可恢复
+  - `reset-userkey`: 保留 userKey 但清空所有指纹数据和使用统计，恢复到刚创建状态
+  - 两个命令都需要 `--confirm` 参数确认，默认有5秒等待期防止误操作
 
 ## 使用前置
 - 需配置 `MONGODB_URI` 等数据库连接环境变量

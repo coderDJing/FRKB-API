@@ -16,7 +16,10 @@ module.exports = {
     ENABLED: process.env.BLOOM_FILTER_ENABLED === 'true',
     SIZE: parseInt(process.env.BLOOM_FILTER_SIZE || '1000000'),
     HASH_FUNCTIONS: parseInt(process.env.BLOOM_FILTER_HASH_FUNCTIONS || '10'),
-    FALSE_POSITIVE_RATE: 0.01 // 1%误报率
+    FALSE_POSITIVE_RATE: 0.01, // 1%误报率
+    MIN_CAPACITY: parseInt(process.env.BLOOM_FILTER_MIN_CAPACITY || '50000'), // 最小容量5万
+    GROWTH_MULTIPLIER: parseFloat(process.env.BLOOM_FILTER_GROWTH_MULTIPLIER || '5'), // 增长倍数
+    BASE_MULTIPLIER: parseFloat(process.env.BLOOM_FILTER_BASE_MULTIPLIER || '1.2') // 基础倍数
   },
 
   // 缓存配置
@@ -60,7 +63,7 @@ module.exports = {
   // 请求限制配置
   RATE_LIMIT: {
     MAX_REQUESTS: parseInt(process.env.RATE_LIMIT_MAX || '100'),
-    WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'), // 15分钟
+    WINDOW_MS: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '60000'), // 1分钟
     HEADERS: true,
     MESSAGE: '请求过于频繁，请稍后再试'
   },

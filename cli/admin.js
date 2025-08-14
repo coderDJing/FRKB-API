@@ -125,8 +125,6 @@ async function listUserKeys(options) {
     query.isActive = options.active;
   }
   
-  // 过期概念已移除，不支持 expired 过滤
-  
   const userKeys = await AuthorizedUserKey.find(query)
     .sort({ createdAt: -1 })
     .limit(options.limit || 50);
@@ -399,6 +397,168 @@ async function cleanupExpiredData(options) {
 }
 
 /**
+ * 完全删除userKey及其所有数据
+ */
+async function deleteUserKey(userKeyOrShortId, options) {
+  console.log('🗑️  正在删除userKey及所有相关数据...');
+  
+  if (!options.confirm) {
+    throw new Error('危险操作需要确认：请添加 --confirm 参数');
+  }
+  
+  let targetUserKey = userKeyOrShortId;
+  let userKeyRecord;
+  
+  // 如果是短ID，找到完整的userKey
+  if (userKeyOrShortId.length === 8) {
+    const keys = await AuthorizedUserKey.find({
+      userKey: new RegExp(`^${userKeyOrShortId}`, 'i')
+    });
+    
+    if (keys.length === 0) {
+      throw new Error('未找到匹配的userKey');
+    } else if (keys.length > 1) {
+      throw new Error('找到多个匹配的userKey，请提供完整的userKey');
+    }
+    
+    targetUserKey = keys[0].userKey;
+    userKeyRecord = keys[0];
+  } else {
+    userKeyRecord = await AuthorizedUserKey.findOne({ userKey: targetUserKey });
+    if (!userKeyRecord) {
+      throw new Error('userKey不存在');
+    }
+  }
+  
+  console.log(`⚠️  即将删除 userKey: ${UserKeyUtils.toShortId(targetUserKey)}`);
+  console.log(`   描述: ${userKeyRecord.description}`);
+  
+  // 统计要删除的数据量
+  const [fingerprintCount, metaCount] = await Promise.all([
+    UserFingerprintCollection.countDocuments({ userKey: targetUserKey }),
+    UserCollectionMeta.countDocuments({ userKey: targetUserKey })
+  ]);
+  
+  console.log(`   指纹数据: ${fingerprintCount} 条`);
+  console.log(`   元数据: ${metaCount} 条`);
+  console.log('');
+  
+  if (!options.force) {
+    console.log('⏳ 5秒后开始删除，按 Ctrl+C 取消...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  
+  // 执行删除操作
+  const [fpResult, metaResult, keyResult] = await Promise.all([
+    UserFingerprintCollection.deleteMany({ userKey: targetUserKey }),
+    UserCollectionMeta.deleteMany({ userKey: targetUserKey }),
+    AuthorizedUserKey.deleteOne({ userKey: targetUserKey })
+  ]);
+  
+  console.log('✅ 删除完成:');
+  console.log(`   指纹数据: ${fpResult.deletedCount} 条`);
+  console.log(`   元数据: ${metaResult.deletedCount} 条`);
+  console.log(`   userKey: ${keyResult.deletedCount} 个`);
+  
+  // 记录操作日志
+  logger.admin('CLI完全删除userKey', {
+    userKey: UserKeyUtils.toShortId(targetUserKey),
+    description: userKeyRecord.description,
+    deletedFingerprints: fpResult.deletedCount,
+    deletedMetas: metaResult.deletedCount,
+    operator: process.env.USER || 'admin'
+  });
+}
+
+/**
+ * 重置userKey数据（保留userKey但清空所有使用数据）
+ */
+async function resetUserKey(userKeyOrShortId, options) {
+  console.log('🔄 正在重置userKey数据...');
+  
+  if (!options.confirm) {
+    throw new Error('危险操作需要确认：请添加 --confirm 参数');
+  }
+  
+  let targetUserKey = userKeyOrShortId;
+  let userKeyRecord;
+  
+  // 如果是短ID，找到完整的userKey
+  if (userKeyOrShortId.length === 8) {
+    const keys = await AuthorizedUserKey.find({
+      userKey: new RegExp(`^${userKeyOrShortId}`, 'i')
+    });
+    
+    if (keys.length === 0) {
+      throw new Error('未找到匹配的userKey');
+    } else if (keys.length > 1) {
+      throw new Error('找到多个匹配的userKey，请提供完整的userKey');
+    }
+    
+    targetUserKey = keys[0].userKey;
+    userKeyRecord = keys[0];
+  } else {
+    userKeyRecord = await AuthorizedUserKey.findOne({ userKey: targetUserKey });
+    if (!userKeyRecord) {
+      throw new Error('userKey不存在');
+    }
+  }
+  
+  console.log(`⚠️  即将重置 userKey: ${UserKeyUtils.toShortId(targetUserKey)}`);
+  console.log(`   描述: ${userKeyRecord.description}`);
+  
+  // 统计要清除的数据量
+  const [fingerprintCount, metaCount] = await Promise.all([
+    UserFingerprintCollection.countDocuments({ userKey: targetUserKey }),
+    UserCollectionMeta.countDocuments({ userKey: targetUserKey })
+  ]);
+  
+  console.log(`   指纹数据: ${fingerprintCount} 条`);
+  console.log(`   元数据: ${metaCount} 条`);
+  console.log(`   使用统计: 总请求${userKeyRecord.usageStats.totalRequests}次，同步${userKeyRecord.usageStats.totalSyncs}次`);
+  console.log('');
+  
+  if (!options.force) {
+    console.log('⏳ 5秒后开始重置，按 Ctrl+C 取消...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+  }
+  
+  // 执行重置操作
+  const [fpResult, metaResult, keyResult] = await Promise.all([
+    UserFingerprintCollection.deleteMany({ userKey: targetUserKey }),
+    UserCollectionMeta.deleteMany({ userKey: targetUserKey }),
+    AuthorizedUserKey.updateOne(
+      { userKey: targetUserKey },
+      {
+        $set: {
+          lastUsedAt: null,
+          'usageStats.totalRequests': 0,
+          'usageStats.totalSyncs': 0,
+          'usageStats.lastIpAddress': null,
+          notes: options.notes || '通过CLI重置数据'
+        }
+      }
+    )
+  ]);
+  
+  console.log('✅ 重置完成:');
+  console.log(`   清除指纹数据: ${fpResult.deletedCount} 条`);
+  console.log(`   清除元数据: ${metaResult.deletedCount} 条`);
+  console.log(`   重置使用统计: ${keyResult.modifiedCount} 个userKey`);
+  console.log('');
+  console.log('🎉 userKey已恢复到刚创建时的状态');
+  
+  // 记录操作日志
+  logger.admin('CLI重置userKey数据', {
+    userKey: UserKeyUtils.toShortId(targetUserKey),
+    description: userKeyRecord.description,
+    clearedFingerprints: fpResult.deletedCount,
+    clearedMetas: metaResult.deletedCount,
+    operator: process.env.USER || 'admin'
+  });
+}
+
+/**
  * 清理无效数据：无主指纹、无主/空的元数据
  * - 无主 指纹: 在 AuthorizedUserKey 中不存在的 userKey 对应的指纹数据
  * - 无主 meta: 在 AuthorizedUserKey 中不存在的 userKey 的 meta
@@ -574,6 +734,29 @@ program
     await cleanupInvalidData(options);
   }));
 
+// 删除userKey命令
+program
+  .command('delete-userkey <userkey>')
+  .alias('delete')
+  .description('完全删除userKey及其所有数据（危险操作）')
+  .option('--confirm', '确认执行删除操作（必需）')
+  .option('--force', '跳过5秒等待直接执行')
+  .action(withErrorHandling((userkey, options) => {
+    return deleteUserKey(userkey, options);
+  }));
+
+// 重置userKey命令
+program
+  .command('reset-userkey <userkey>')
+  .alias('reset')
+  .description('重置userKey数据，清空所有使用记录（危险操作）')
+  .option('--confirm', '确认执行重置操作（必需）')
+  .option('--force', '跳过5秒等待直接执行')
+  .option('-n, --notes <notes>', '重置后的备注信息')
+  .action(withErrorHandling((userkey, options) => {
+    return resetUserKey(userkey, options);
+  }));
+
 // 帮助信息
 program
   .command('help-examples')
@@ -598,10 +781,16 @@ program
    node cli/admin.js status
    node cli/admin.js cleanup
 
+🗑️  危险操作:
+   node cli/admin.js delete 550e8400 --confirm
+   node cli/admin.js reset 550e8400 --confirm --notes "重新开始"
+
 💡 提示:
    - userKey可以使用前8位短ID进行操作
    - 所有操作都会记录到系统日志中
    - 建议定期执行cleanup清理过期数据
+   - 删除和重置操作需要 --confirm 参数确认
+   - 删除操作会完全移除userKey，重置操作会保留userKey但清空数据
     `);
   });
 

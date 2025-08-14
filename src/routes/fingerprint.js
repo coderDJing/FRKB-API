@@ -2,7 +2,7 @@ const express = require('express');
 const FingerprintSyncController = require('../controllers/fingerprintSyncController');
 
 const { apiKeyAuth, syncAuth, queryAuth, adminAuth } = require('../middlewares/auth');
-const { syncRateLimit, relaxedRateLimit, strictRateLimit } = require('../middlewares/rateLimit');
+const { strictRateLimit } = require('../middlewares/rateLimit');
 const {
   validateSyncCheck,
   validateBidirectionalDiff,
@@ -19,28 +19,28 @@ const router = express.Router();
 router.use(validateRequestSize);
 
 // 预检查
-router.post('/check', relaxedRateLimit, syncAuth, ...validateSyncCheck(), FingerprintSyncController.checkSyncRequired);
+router.post('/check', syncAuth, ...validateSyncCheck(), FingerprintSyncController.checkSyncRequired);
 
 // 仅校验 userKey（不做任何数据写入）
-router.post('/validate-user-key', relaxedRateLimit, apiKeyAuth, FingerprintSyncController.validateUserKey);
+router.post('/validate-user-key', apiKeyAuth, FingerprintSyncController.validateUserKey);
 
 // 双向差异（分批）
-router.post('/bidirectional-diff', syncRateLimit, syncAuth, ...validateBidirectionalDiff(), validateFingerprintArrayContent, FingerprintSyncController.bidirectionalDiff);
+router.post('/bidirectional-diff', syncAuth, ...validateBidirectionalDiff(), validateFingerprintArrayContent, FingerprintSyncController.bidirectionalDiff);
 
 // 批量新增
-router.post('/add', syncRateLimit, syncAuth, ...validateBatchAdd(), validateFingerprintArrayContent, FingerprintSyncController.batchAdd);
+router.post('/add', syncAuth, ...validateBatchAdd(), validateFingerprintArrayContent, FingerprintSyncController.batchAdd);
 
 // 分页拉取缺失
-router.post('/pull-diff-page', syncRateLimit, syncAuth, ...validatePullDiffPage(), FingerprintSyncController.pullDiffPage);
+router.post('/pull-diff-page', syncAuth, ...validatePullDiffPage(), FingerprintSyncController.pullDiffPage);
 
-// 一次性差异分析
+// 一次性差异分析（敏感操作保留严格限流）
 router.post('/analyze-diff', strictRateLimit, syncAuth, ...validateDiffAnalysis(), validateFingerprintArrayContent, FingerprintSyncController.analyzeDifference);
 
 // 状态与服务统计
-router.get('/status', relaxedRateLimit, queryAuth, FingerprintSyncController.getSyncStatus);
-router.get('/service-stats', relaxedRateLimit, syncAuth[0], FingerprintSyncController.getServiceStats);
+router.get('/status', queryAuth, FingerprintSyncController.getSyncStatus);
+router.get('/service-stats', syncAuth[0], FingerprintSyncController.getServiceStats);
 
-// 管理接口
+// 管理接口（敏感操作保留严格限流）
 router.delete('/cache/:userKey', strictRateLimit, syncAuth, FingerprintSyncController.clearUserCache);
 router.delete('/lock/:userKey', strictRateLimit, adminAuth, FingerprintSyncController.forceSyncUnlock);
 

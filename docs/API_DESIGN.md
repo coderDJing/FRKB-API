@@ -7,7 +7,7 @@
 - 鉴权：所有业务接口默认需要请求头 `Authorization: Bearer <API_SECRET_KEY>`，并携带 `userKey`
 - 请求头：`Content-Type: application/json`
 - 请求体大小：JSON 解析按环境变量 `REQUEST_SIZE_LIMIT`（默认 10MB），但额外校验当前限制为 10MB，超过将返回错误
-- 速率限制：按接口使用不同策略（见各端点说明）；响应包含标准限流头（`RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset`）
+- 速率限制：全局基础限流（100次/分钟），敏感操作额外严格限流（10次/5分钟）；响应包含标准限流头（`RateLimit-Limit` / `RateLimit-Remaining` / `RateLimit-Reset`）
 - 会话 TTL：差异会话有效期 5 分钟（`SYNC_CONFIG.DIFF_SESSION_TTL`）
 - 指纹规范：64 位十六进制（SHA256），小写；数组必须去重，否则请求会因重复项被拒绝
 - 批量大小：`BATCH_SIZE` 源自服务端配置（环境变量 `BATCH_SIZE`，默认 1000）
@@ -73,7 +73,7 @@
 ## 2) 双向差异检测（分批，指纹）
 - 方法与路径：POST `/bidirectional-diff`
 - 认证：需要 API 密钥 + `userKey`（body）
-- 速率限制：同步专用限流（每分钟默认 30 次）
+- 速率限制：全局基础限流（100次/分钟）
 - 请求体字段：
 
 | 字段 | 位置 | 类型 | 必填 | 约束 | 说明 |
@@ -105,7 +105,7 @@
 ## 3) 批量新增（指纹）
 - 方法与路径：POST `/add`
 - 认证：需要 API 密钥 + `userKey`（body）
-- 速率限制：同步专用限流
+- 速率限制：全局基础限流（100次/分钟）
 - 请求体字段：
 
 | 字段 | 位置 | 类型 | 必填 | 约束 | 说明 |
@@ -158,7 +158,7 @@
 ## 5) 分页拉取差异（指纹）
 - 方法与路径：POST `/pull-diff-page`
 - 认证：需要 API 密钥 + `userKey`（body）
-- 速率限制：同步专用限流
+- 速率限制：全局基础限流（100次/分钟）
 - 请求体字段：
 
 | 字段 | 位置 | 类型 | 必填 | 约束 | 说明 |
@@ -250,7 +250,7 @@
 
 常见错误码：
 - `INVALID_API_KEY`、`INVALID_USER_KEY`
-- `RATE_LIMIT_EXCEEDED`、`STRICT_RATE_LIMIT_EXCEEDED`、`SYNC_RATE_LIMIT_EXCEEDED`
+- `RATE_LIMIT_EXCEEDED`、`STRICT_RATE_LIMIT_EXCEEDED`
 - `VALIDATION_ERROR`、`INVALID_FINGERPRINT_FORMAT`、`REQUEST_TOO_LARGE`
 - `DIFF_SESSION_NOT_FOUND`（会话过期/不存在）、`INTERNAL_ERROR`
 
@@ -268,8 +268,8 @@ HTTP 状态：200/400/401/403/404/409/429/500（与实现中的错误处理中�
 
 ## 附：健康接口速览（无业务鉴权）
 - 基础健康：GET `/health`（无需鉴权）。返回进程与数据库连通状态；非 200 视为不健康。
-- 详细健康：GET `/frkbapi/v1/health/detailed`（宽松限流）。返回组件健康、内存/CPU、耗时等。
-- 系统统计：GET `/frkbapi/v1/health/stats`（宽松限流）。返回数据库、运行时与服务统计。
+- 详细健康：GET `/frkbapi/v1/health/detailed`。返回组件健康、内存/CPU、耗时等。
+- 系统统计：GET `/frkbapi/v1/health/stats`。返回数据库、运行时与服务统计。
 - 诊断接口：GET `/frkbapi/v1/health/diagnose`（严格限流，需 `adminToken`）。返回诊断与建议。
 
 ---
@@ -421,10 +421,9 @@ const data = await res.json();
 
 - 服务端启用标准 RateLimit 响应头（如 `RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`）。
 - 触发限流时，响应 JSON 会包含 `retryAfter` 秒数提示；也可能返回 `Retry-After` 头。
-- 各接口限流策略：
-  - 查询型（`/check`、`/status`、健康与统计）：宽松限流
-  - 同步型（`/bidirectional-diff`、`/add`、`/pull-diff-page`）：同步限流（默认每分钟 30 次）
-  - 重型（`/analyze-diff`、管理类）：严格限流
+- 限流策略：
+  - 常规接口（同步、查询、健康等）：全局基础限流（100次/分钟）
+  - 敏感操作（`/analyze-diff`、缓存清理、锁管理、系统诊断）：额外严格限流（10次/5分钟）
 
 ---
 
@@ -434,7 +433,7 @@ const data = await res.json();
 |---|---:|---|---|
 | INVALID_API_KEY | 401 | API 密钥缺失/错误 | 校验并重新配置密钥 |
 | INVALID_USER_KEY | 400/404 | userKey 格式无效或不存在 | 修正 userKey 或联系管理员发放 |
-| RATE_LIMIT_EXCEEDED / STRICT_RATE_LIMIT_EXCEEDED / SYNC_RATE_LIMIT_EXCEEDED | 429 | 触发限流 | 按 `retryAfter` 或指数退避重试，降低并发/批量 |
+| RATE_LIMIT_EXCEEDED / STRICT_RATE_LIMIT_EXCEEDED | 429 | 触发限流 | 按 `retryAfter` 或指数退避重试，降低并发/批量 |
 | INVALID_FINGERPRINT_FORMAT / VALIDATION_ERROR | 400 | 参数校验失败 | 修正参数；确保指纹去重且为 64 位十六进制（SHA256） |
 | DIFF_SESSION_NOT_FOUND | 400/404 | 差异会话过期/不存在 | 重新执行 `analyze-diff` 并继续分页 |
 | INTERNAL_ERROR | 500 | 服务器内部错误 | 记录请求，指数退避重试；若持续失败联系服务端 |

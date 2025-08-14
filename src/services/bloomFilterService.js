@@ -28,13 +28,35 @@ class BloomFilterService {
    */
   createFilter(expectedElements, falsePositiveRate = BLOOM_FILTER.FALSE_POSITIVE_RATE) {
     try {
-      const filter = new BloomFilter(expectedElements, falsePositiveRate);
+      // 根据期望元素数量和误报率计算最优参数
+      const n = expectedElements;
+      const p = falsePositiveRate;
       
-      logger.info('创建布隆过滤器', {
-        expectedElements,
-        falsePositiveRate,
-        actualSize: filter.bits.length,
-        hashFunctions: filter.nbHashes
+      // 计算位数组大小: m = -n * ln(p) / (ln(2))^2
+      const bitSize = Math.ceil(-n * Math.log(p) / (Math.log(2) * Math.log(2)));
+      
+      // 计算哈希函数数量: k = (m/n) * ln(2)
+      const hashFunctions = Math.ceil((bitSize / n) * Math.log(2));
+      
+      // 确保哈希函数数量至少为1
+      const finalHashFunctions = Math.max(1, hashFunctions);
+      
+      logger.info('布隆过滤器参数计算', {
+        expectedElements: n,
+        falsePositiveRate: p,
+        calculatedBitSize: bitSize,
+        calculatedHashFunctions: hashFunctions,
+        finalHashFunctions
+      });
+      
+      // 使用计算出的参数创建布隆过滤器
+      const filter = new BloomFilter(n, finalHashFunctions, bitSize);
+      
+      logger.info('创建布隆过滤器成功', {
+        expectedElements: n,
+        falsePositiveRate: p,
+        actualBitSize: filter.bits.length,
+        actualHashFunctions: filter.nbHashes
       });
       
       return filter;
@@ -85,7 +107,19 @@ class BloomFilterService {
       }
 
       // 创建新的布隆过滤器
-      const expectedElements = Math.max(count * 1.2, 1000); // 预留20%空间
+      // 使用更保守的容量预估策略，考虑未来增长
+      const baseCapacity = Math.max(count * BLOOM_FILTER.BASE_MULTIPLIER, 1000); // 基于当前数据预留空间
+      const growthCapacity = Math.max(count * BLOOM_FILTER.GROWTH_MULTIPLIER, BLOOM_FILTER.MIN_CAPACITY); // 考虑增长空间
+      const expectedElements = Math.max(baseCapacity, growthCapacity);
+      
+      logger.info('布隆过滤器容量计算', {
+        userKey: userKey.substring(0, 8) + '***',
+        currentCount: count,
+        baseCapacity,
+        growthCapacity,
+        finalExpectedElements: expectedElements
+      });
+      
       const filter = this.createFilter(expectedElements);
 
       // 分批加载指纹数据
@@ -297,8 +331,17 @@ class BloomFilterService {
         filter = await this.initializeFilter(userKey);
         
         if (!filter) {
-          // 创建新的过滤器
-          const expectedElements = Math.max(fingerprintArray.length * 10, 1000);
+          // 创建新的过滤器，使用更合理的容量估算
+          const batchSize = fingerprintArray.length;
+          const conservativeCapacity = Math.max(batchSize * BLOOM_FILTER.GROWTH_MULTIPLIER * 2, BLOOM_FILTER.MIN_CAPACITY); // 批量大小的10倍，最少配置的最小容量
+          const expectedElements = conservativeCapacity;
+          
+          logger.info('为批量添加创建新布隆过滤器', {
+            userKey: userKey.substring(0, 8) + '***',
+            batchSize,
+            expectedElements
+          });
+          
           filter = this.createFilter(expectedElements);
           this.filters.set(userKey, filter);
           this.filterMetas.set(userKey, {

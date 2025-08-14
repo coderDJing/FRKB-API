@@ -136,100 +136,6 @@ const strictRateLimit = rateLimit({
   }
 });
 
-/**
- * 宽松限流（用于查询操作）
- */
-const relaxedRateLimit = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1分钟
-  max: 200, // 每分钟最多200次请求
-  message: {
-    success: false,
-    error: 'QUERY_RATE_LIMIT_EXCEEDED',
-    message: '查询请求过于频繁，请稍后再试',
-    retryAfter: 60 // 1分钟
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  
-  keyGenerator: (req) => {
-    const userKey = req.userKey || req.body?.userKey || req.query?.userKey;
-    const ip = req.ip;
-    
-    if (userKey && UserKeyUtils.isValidFormat(userKey)) {
-      const shortUserKey = UserKeyUtils.toShortId(userKey);
-      return `relaxed:${ip}:${shortUserKey}`;
-    }
-    
-    return `relaxed:${ip}`;
-  },
-  
-  skip: (req) => {
-    // 健康检查和根路径不限流
-    return req.path === '/health' || req.path === '/';
-  }
-});
-
-/**
- * 同步操作专用限流
- */
-const syncRateLimit = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1分钟
-  max: 500, // 每分钟最多500次同步请求（适应大数据量同步）
-  message: {
-    success: false,
-    error: 'SYNC_RATE_LIMIT_EXCEEDED',
-    message: '同步请求过于频繁，请稍后再试',
-    retryAfter: 60
-  },
-  standardHeaders: true,
-  legacyHeaders: false,
-  
-  keyGenerator: (req) => {
-    const userKey = req.userKey || req.body?.userKey || req.query?.userKey;
-    const ip = req.ip;
-    
-    if (userKey && UserKeyUtils.isValidFormat(userKey)) {
-      const shortUserKey = UserKeyUtils.toShortId(userKey);
-      return `sync:${ip}:${shortUserKey}`;
-    }
-    
-    return `sync:${ip}`;
-  },
-  
-  skip: (req) => {
-    // 开发环境跳过同步限流，便于开发调试
-    if (process.env.NODE_ENV === 'development') {
-      return true;
-    }
-    
-    return false;
-  },
-  
-  handler: (req, res) => {
-    const userKey = req.userKey || req.body?.userKey || req.query?.userKey;
-    
-    logger.security('同步操作限流触发', {
-      ip: req.ip,
-      userKey: userKey ? UserKeyUtils.toShortId(userKey) : 'unknown',
-      url: req.originalUrl,
-      method: req.method
-    });
-    
-    return res.status(HTTP_STATUS.RATE_LIMITED).json({
-      success: false,
-      error: 'SYNC_RATE_LIMIT_EXCEEDED',
-      message: '同步请求过于频繁，请稍后再试',
-      details: {
-        windowMs: 1 * 60 * 1000,
-        maxRequests: 500,
-        retryAfter: 60,
-        suggestion: '大数据量同步时请适当降低并发请求频率'
-      }
-    });
-  }
-  
-  // 注意：onLimitReached已弃用，改为在handler中处理日志
-});
 
 /**
  * 创建自定义限流中间件
@@ -341,8 +247,6 @@ const rateLimitMonitor = (req, res, next) => {
 module.exports = {
   basicRateLimit,
   strictRateLimit,
-  relaxedRateLimit,
-  syncRateLimit,
   createCustomRateLimit,
   rateLimitMonitor
 };

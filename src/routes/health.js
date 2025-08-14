@@ -1,6 +1,6 @@
 const express = require('express');
 const HealthController = require('../controllers/healthController');
-const { relaxedRateLimit, strictRateLimit } = require('../middlewares/rateLimit');
+const { strictRateLimit } = require('../middlewares/rateLimit');
 const { adminAuth } = require('../middlewares/auth');
 
 const router = express.Router();
@@ -16,7 +16,6 @@ const router = express.Router();
  * 提供详细的系统健康状态信息
  */
 router.get('/detailed',
-  relaxedRateLimit,           // 宽松限流
   HealthController.detailedHealth
 );
 
@@ -26,7 +25,6 @@ router.get('/detailed',
  * 获取系统运行统计信息
  */
 router.get('/stats',
-  relaxedRateLimit,           // 宽松限流
   HealthController.getSystemStats
 );
 

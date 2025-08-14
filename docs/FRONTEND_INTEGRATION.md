@@ -10,7 +10,7 @@
 - **认证模型**:
   - **认证**: `Authorization: Bearer <API_SECRET_KEY>`（服务端配置）
   - **userKey**: 前端在请求体中提供，必须通过白名单校验；仅区分启用/禁用
-- **限流**: 返回标准 `RateLimit-*` 响应头（`RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`），被限流时返回 `429` 且响应体含 `retryAfter`（秒）。同步类接口默认约 30/min（可配置）。
+- **限流**: 返回标准 `RateLimit-*` 响应头（`RateLimit-Limit`、`RateLimit-Remaining`、`RateLimit-Reset`），被限流时返回 `429` 且响应体含 `retryAfter`（秒）。全局基础限流 100次/分钟，敏感操作 10次/5分钟。
 
 ### 错误响应（统一）
 - 成功: `{ success: true, data }`
@@ -19,7 +19,7 @@
   - `INVALID_FINGERPRINT_FORMAT`: 指纹格式非法（必须为 64hex，小写；数组内不得包含重复项）
   - `DIFF_SESSION_NOT_FOUND`: 差异会话不存在或已过期（HTTP 404；响应体可含 `retryAfter`，单位秒）
   - `DIFF_SESSION_USER_MISMATCH`: `userKey` 与会话不匹配（HTTP 403）
-  - 限流类（HTTP 429）: `RATE_LIMIT_EXCEEDED` / `STRICT_RATE_LIMIT_EXCEEDED` / `SYNC_RATE_LIMIT_EXCEEDED` / `QUERY_RATE_LIMIT_EXCEEDED`
+  - 限流类（HTTP 429）: `RATE_LIMIT_EXCEEDED` / `STRICT_RATE_LIMIT_EXCEEDED`
 
 ---
 
@@ -99,7 +99,7 @@ POST `/frkbapi/v1/fingerprint-sync/check`
  - **可能的错误**:
    - `400 INVALID_USER_KEY`/参数校验错误（`count`、`hash`）
    - `401 INVALID_API_KEY`: API 密钥缺失/错误
-   - `429 QUERY_RATE_LIMIT_EXCEEDED` 或 `SYNC_RATE_LIMIT_EXCEEDED`: 触发限流
+   - `429 RATE_LIMIT_EXCEEDED`: 触发限流
 
 - **错误响应（示例）**:
 ```json
@@ -159,13 +159,13 @@ POST `/frkbapi/v1/fingerprint-sync/bidirectional-diff`
  - **可能的错误**:
    - `400 INVALID_USER_KEY`/`INVALID_FINGERPRINT_FORMAT`/参数校验错误
    - `401 INVALID_API_KEY`
-   - `429 SYNC_RATE_LIMIT_EXCEEDED`
+   - `429 RATE_LIMIT_EXCEEDED`
 
 - **错误响应（示例）**:
 ```json
 {
   "success": false,
-  "error": "SYNC_RATE_LIMIT_EXCEEDED",
+  "error": "RATE_LIMIT_EXCEEDED",
   "message": "同步请求过于频繁，请稍后再试",
   "details": { "windowMs": 60000, "maxRequests": 30, "retryAfter": 60 },
   "timestamp": "2025-01-01T00:00:00.000Z"
@@ -174,7 +174,7 @@ POST `/frkbapi/v1/fingerprint-sync/bidirectional-diff`
 
 HTTP 响应头（示例）：
 ```http
-RateLimit-Limit: 30
+RateLimit-Limit: 100
 RateLimit-Remaining: 0
 RateLimit-Reset: 60
 Retry-After: 60
@@ -351,7 +351,7 @@ POST `/frkbapi/v1/fingerprint-sync/add`
  - **可能的错误**:
    - `400 INVALID_FINGERPRINT_FORMAT`/请求体重复项/参数校验错误
    - `401 INVALID_API_KEY`
-   - `429 SYNC_RATE_LIMIT_EXCEEDED`
+   - `429 RATE_LIMIT_EXCEEDED`
 
 - **错误响应（示例）**:
 ```json
@@ -426,7 +426,7 @@ async function syncAll(userKey: string, clientFingerprints: string[]) {
 ## 接入建议
 - **数组去重与小写**: 所有 `string[]` 指纹数组必须先去重并转小写，否则将被 400 拒绝。
 - **分页与重试**: `/pull-diff-page` 在会话内顺序稳定，可安全重试；若 404 + `DIFF_SESSION_NOT_FOUND`，根据 `retryAfter` 重建会话并重跑。
-- **限流处理**: 收到 429 时，优先读取 `Retry-After` 与 `RateLimit-Reset`，按秒级退避；重要操作做好幂等。
+- **限流处理**: 收到 429 时，优先读取 `Retry-After` 与 `RateLimit-Reset`，按秒级退避；建议客户端每秒最多1次请求；重要操作做好幂等。
 - **提交顺序**: 推荐“先 `/add`，再本地原子替换”，避免本地状态与服务端短暂不一致。
 - **安全**: 确保 `API_SECRET_KEY` 仅在安全环境下使用，`userKey` 由后端发放与白名单控制。
 
