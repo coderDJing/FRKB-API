@@ -24,7 +24,7 @@ module.exports = {
 
   // 缓存配置
   CACHE_CONFIG: {
-    ENABLED: process.env.CACHE_ENABLED === 'true',
+    ENABLED: true,
     TTL: parseInt(process.env.CACHE_TTL || '3600'), // 1小时
     MAX_SIZE: parseInt(process.env.CACHE_MAX_SIZE || '10000')
   },
@@ -72,7 +72,8 @@ module.exports = {
   COLLECTIONS: {
     USER_FINGERPRINTS: 'user_fingerprint_collections',
     USER_META: 'user_collection_metas',
-    AUTH_KEYS: 'authorized_user_keys'
+    AUTH_KEYS: 'authorized_user_keys',
+    DIFF_SESSIONS: 'diff_sessions'
   },
 
   // 性能监控配置

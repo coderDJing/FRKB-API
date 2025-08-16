@@ -85,7 +85,7 @@ const validateFingerprintArray = (fieldName = 'fingerprints', options = {}) => {
   return [
     body(fieldName)
       .if(() => required)
-      .notEmpty()
+      .exists()
       .withMessage(`${fieldName}不能为空`)
       .isArray({ min: minLength, max: maxLength })
       .withMessage(`${fieldName}必须是数组，长度在${minLength}-${maxLength}之间`)
@@ -244,7 +244,7 @@ const validateBatchPush = () => [
  */
 const validateDiffAnalysis = () => [
   ...validateUserKey(),
-  ...validateFingerprintArray('clientFingerprints', { maxLength: 100000 }) // 允许更大的数组用于完整差异分析
+  ...validateFingerprintArray('clientFingerprints', { minLength: 0, maxLength: 100000 }) // 允许空数组用于完整差异分析与全量拉取
 ];
 
 /**

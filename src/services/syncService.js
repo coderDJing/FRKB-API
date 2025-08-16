@@ -6,6 +6,7 @@ const UserKeyUtils = require('../utils/userKeyUtils');
 const BatchUtils = require('../utils/batchUtils');
 const logger = require('../utils/logger');
 const cacheService = require('./cacheService');
+const DiffSession = require('../models/DiffSession');
 const bloomFilterService = require('./bloomFilterService');
 const { BATCH_CONFIG, SYNC_CONFIG, HTTP_STATUS } = require('../config/constants');
 
@@ -391,8 +392,8 @@ class SyncService {
         pageIndex
       });
 
-      // 获取会话信息
-      const sessionInfo = cacheService.getDiffSession(sessionId);
+      // 获取会话信息（持久化读取）
+      let sessionInfo = await DiffSession.findOne({ sessionId }).lean();
       if (!sessionInfo) {
         const err = new Error('差异会话已过期或不存在');
         err.status = HTTP_STATUS.NOT_FOUND;
@@ -414,16 +415,14 @@ class SyncService {
         ? sessionInfo.missingInClient
         : [];
 
-      // 按 fingerprint 升序稳定排序（可缓存回会话，避免重复排序）
+      // 按 fingerprint 升序稳定排序（写回持久化，避免重复排序）
       let sortedMissing = sessionInfo.sortedMissingInClient;
-      if (!Array.isArray(sortedMissing)) {
+      if (!Array.isArray(sortedMissing) || sortedMissing.length !== totalArray.length) {
         sortedMissing = [...totalArray].map(m => String(m).toLowerCase()).sort();
-        // 回写缓存（默认TTL），便于后续分页无需重复排序
         try {
-          const updated = { ...sessionInfo, sortedMissingInClient: sortedMissing };
-          cacheService.setDiffSession(sessionId, updated);
+          await DiffSession.updateOne({ sessionId }, { $set: { sortedMissingInClient: sortedMissing } });
         } catch (_) {
-          // 忽略缓存写入失败
+          // 忽略写回失败
         }
       }
 
@@ -500,9 +499,9 @@ class SyncService {
       // 获取服务端和客户端的差异
       const diffResult = await UserFingerprintCollection.findMissingFingerprints(userKey, normalizedClientFingerprints);
 
-      // 创建差异会话
+      // 创建差异会话（持久化）
       const sessionId = `diff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-      const sessionData = {
+      await DiffSession.create({
         sessionId,
         userKey,
         clientFingerprints: normalizedClientFingerprints,
@@ -510,12 +509,8 @@ class SyncService {
         missingInServer: diffResult.missingInServer,
         totalClient: diffResult.totalClient,
         totalServer: diffResult.totalServer,
-        createdAt: new Date(),
         processed: false
-      };
-
-      // 缓存会话数据
-      cacheService.setDiffSession(sessionId, sessionData);
+      });
 
       const pageSize = SYNC_CONFIG.DEFAULT_PAGE_SIZE;
       const totalPages = Math.ceil(diffResult.missingInClient.length / pageSize);

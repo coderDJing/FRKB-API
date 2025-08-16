@@ -10,6 +10,7 @@ const { connectDB, closeDB } = require('../src/config/database');
 const AuthorizedUserKey = require('../src/models/AuthorizedUserKey');
 const UserFingerprintCollection = require('../src/models/UserFingerprintCollection');
 const UserCollectionMeta = require('../src/models/UserCollectionMeta');
+const DiffSession = require('../src/models/DiffSession');
 const UserKeyUtils = require('../src/utils/userKeyUtils');
 const HashUtils = require('../src/utils/hashUtils');
 const logger = require('../src/utils/logger');
@@ -454,6 +455,22 @@ async function deleteUserKey(userKeyOrShortId, options) {
     UserCollectionMeta.deleteMany({ userKey: targetUserKey }),
     AuthorizedUserKey.deleteOne({ userKey: targetUserKey })
   ]);
+
+  // 清理与该 userKey 相关的会话与缓存
+  let deletedSessionsCount = 0;
+  let clearedCacheCount = 0;
+  try {
+    const cacheService = require('../src/services/cacheService');
+    // 清除该用户缓存项（元数据/集合哈希/存在性缓存）
+    clearedCacheCount = cacheService.clearUserCache(targetUserKey) || 0;
+    // 删除该用户的所有持久化会话
+    const deletedSessions = await DiffSession.deleteMany({ userKey: targetUserKey });
+    deletedSessionsCount = deletedSessions.deletedCount || 0;
+    console.log(`   清除缓存: ${clearedCacheCount} 项`);
+    console.log(`   删除会话: ${deletedSessionsCount} 个`);
+  } catch (e) {
+    console.warn('⚠️ 清理缓存或会话时出现问题（已忽略）:', e.message);
+  }
   
   console.log('✅ 删除完成:');
   console.log(`   指纹数据: ${fpResult.deletedCount} 条`);
@@ -466,6 +483,8 @@ async function deleteUserKey(userKeyOrShortId, options) {
     description: userKeyRecord.description,
     deletedFingerprints: fpResult.deletedCount,
     deletedMetas: metaResult.deletedCount,
+    deletedSessions: deletedSessionsCount,
+    clearedCache: clearedCacheCount,
     operator: process.env.USER || 'admin'
   });
 }
@@ -547,6 +566,17 @@ async function resetUserKey(userKeyOrShortId, options) {
   console.log(`   重置使用统计: ${keyResult.modifiedCount} 个userKey`);
   console.log('');
   console.log('🎉 userKey已恢复到刚创建时的状态');
+
+  // 清理与该 userKey 相关的会话与缓存
+  try {
+    const cacheService = require('../src/services/cacheService');
+    const clearedCache = cacheService.clearUserCache(targetUserKey) || 0;
+    const deletedSessions = await DiffSession.deleteMany({ userKey: targetUserKey });
+    console.log(`   清除缓存: ${clearedCache} 项`);
+    console.log(`   删除会话: ${deletedSessions.deletedCount || 0} 个`);
+  } catch (e) {
+    console.warn('⚠️ 清理缓存或会话时出现问题（已忽略）:', e.message);
+  }
   
   // 记录操作日志
   logger.admin('CLI重置userKey数据', {

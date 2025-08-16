@@ -139,7 +139,7 @@
 | 字段 | 位置 | 类型 | 必填 | 约束 | 说明 |
 |---|---|---|---|---|---|
 | userKey | body | string | 是 | UUID v4 | 同步用户标识 |
-| clientFingerprints | body | string[] | 是 | 1..100000；64 位十六进制 | 客户端完整指纹集合 |
+| clientFingerprints | body | string[] | 是 | 0..100000；64 位十六进制 | 客户端完整指纹集合（允许为空用于全量拉取）|
 
 - 成功返回字段：
 
