@@ -28,6 +28,7 @@ router.get('/', (req, res) => {
         add: 'POST /frkbapi/v1/fingerprint-sync/add - 批量添加指纹',
         pullDiffPage: 'POST /frkbapi/v1/fingerprint-sync/pull-diff-page - 分页拉取差异数据',
         analyzeDiff: 'POST /frkbapi/v1/fingerprint-sync/analyze-diff - 完整差异分析',
+        reset: 'POST /frkbapi/v1/fingerprint-sync/reset - 重置指定userKey的所有数据（不重置使用统计）',
         status: 'GET /frkbapi/v1/fingerprint-sync/status?userKey=xxx - 获取同步状态',
         serviceStats: 'GET /frkbapi/v1/fingerprint-sync/service-stats - 服务统计',
         clearCache: 'DELETE /frkbapi/v1/fingerprint-sync/cache/:userKey - 清除用户缓存',

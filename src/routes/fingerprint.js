@@ -44,6 +44,9 @@ router.get('/service-stats', syncAuth[0], FingerprintSyncController.getServiceSt
 router.delete('/cache/:userKey', strictRateLimit, syncAuth, FingerprintSyncController.clearUserCache);
 router.delete('/lock/:userKey', strictRateLimit, adminAuth, FingerprintSyncController.forceSyncUnlock);
 
+// 客户端发起的重置接口（需要 API Key + userKey，使用统计不重置）
+router.post('/reset', strictRateLimit, syncAuth, FingerprintSyncController.resetUserData);
+
 module.exports = router;
 
 

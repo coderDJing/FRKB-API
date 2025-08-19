@@ -380,6 +380,72 @@ POST `/frkbapi/v1/fingerprint-sync/add`
 
 ---
 
+### 6) 重置用户数据（不重置使用统计）
+POST `/frkbapi/v1/fingerprint-sync/reset`
+
+- **请求头**: `Authorization: Bearer <API_SECRET_KEY>`
+- **请求参数**:
+  - `userKey` (string, 必填): 目标用户标识（UUID v4）
+  - `notes` (string, 可选): 重置备注（写入 `AuthorizedUserKey.notes`）
+- **成功返回字段**:
+  - `success` (boolean)
+  - `message` (string): 固定“userKey数据已重置”
+  - `userKey` (string)
+  - `before.fingerprintCount` (number)
+  - `before.metaCount` (number)
+  - `before.usageStats.totalRequests` (number)
+  - `before.usageStats.totalSyncs` (number)
+  - `result.clearedFingerprints` (number)
+  - `result.clearedMetas` (number)
+  - `result.deletedSessions` (number)
+  - `result.clearedCache` (number)
+  - `timestamp` (string)
+- **成功响应（示例）**:
+```json
+{
+  "success": true,
+  "message": "userKey数据已重置",
+  "userKey": "550e8400-e29b-41d4-a716-446655440000",
+  "before": {
+    "fingerprintCount": 52345,
+    "metaCount": 1,
+    "usageStats": { "totalRequests": 1024, "totalSyncs": 16 }
+  },
+  "result": {
+    "clearedFingerprints": 52345,
+    "clearedMetas": 1,
+    "deletedSessions": 3,
+    "clearedCache": 5
+  },
+  "timestamp": "2025-01-01T00:00:00.000Z"
+}
+```
+- **说明**:
+  - 该操作不会重置 `usageStats`（仅回显重置前的数值）。
+  - 该接口受严格限流保护，避免误触频繁重置。
+  - 若 `userKey` 无效或不存在将返回 400/404。
+
+- **可能的错误**:
+  - `401 INVALID_API_KEY`: Authorization 缺失/格式错误/无效
+  - `400 INVALID_USER_KEY`: `userKey` 缺失或格式不合法
+  - `404 USER_KEY_NOT_FOUND`: 白名单不存在该 `userKey`
+  - `403 USER_KEY_INACTIVE`: 该 `userKey` 已被禁用
+  - `429 STRICT_RATE_LIMIT_EXCEEDED`: 严格限流触发（含 `retryAfter` 秒）
+  - `400 REQUEST_TOO_LARGE`: 请求体超过 10MB
+  - `500 INTERNAL_ERROR` / `AUTH_ERROR`: 服务端内部错误或认证异常
+
+- **错误响应（示例）**:
+```json
+{
+  "success": false,
+  "error": "INVALID_API_KEY",
+  "message": "缺少Authorization头",
+  "timestamp": "2025-01-01T00:00:00.000Z"
+}
+```
+
+---
+
 ## 典型同步流程（伪代码）
 ```ts
 async function syncAll(userKey: string, clientFingerprints: string[]) {

@@ -236,6 +236,73 @@
 
 ---
 
+## 10) 重置用户数据（不重置使用统计）
+- 方法与路径：POST `/reset`
+- 认证：需要 API 密钥 + `userKey`（body）
+- 速率限制：严格限流（敏感操作）
+- 请求体字段：
+
+| 字段 | 位置 | 类型 | 必填 | 约束 | 说明 |
+|---|---|---|---|---|---|
+| userKey | body | string | 是 | UUID v4 | 目标用户标识 |
+| notes | body | string | 否 | ≤500 字 | 重置备注（将写入 `AuthorizedUserKey.notes`）|
+
+- 成功返回字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| success | boolean | 是否成功 |
+| message | string | 固定为“userKey数据已重置” |
+| userKey | string | 标准化后的 userKey |
+| before.fingerprintCount | number | 重置前指纹条数 |
+| before.metaCount | number | 重置前元数据记录条数 |
+| before.usageStats.totalRequests | number | 使用统计（仅回显，不会被清零）|
+| before.usageStats.totalSyncs | number | 使用统计（仅回显，不会被清零）|
+| result.clearedFingerprints | number | 实际删除的指纹条数 |
+| result.clearedMetas | number | 实际删除的元数据条数 |
+| result.deletedSessions | number | 删除的差异会话数 |
+| result.clearedCache | number | 清理的缓存项数 |
+| timestamp | string | 时间戳 |
+
+- 成功请求示例：
+
+```bash
+curl -X POST "$BASE_URL/frkbapi/v1/fingerprint-sync/reset" \
+  -H "Authorization: Bearer $API_SECRET_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "userKey": "550e8400-e29b-41d4-a716-446655440000",
+    "notes": "客户端发起重置"
+  }'
+```
+
+- 说明：
+- 该操作将删除该 `userKey` 的全部指纹数据与元数据，清理相关缓存与持久化差异会话；但不会重置 `AuthorizedUserKey.usageStats`。
+- 调用方需携带有效 `API_SECRET_KEY`，并在 body 中提供有效 `userKey`。
+
+- 可能的错误：
+  - `401 INVALID_API_KEY`：缺少/格式错误/无效的 Authorization 头
+  - `400 INVALID_USER_KEY`：`userKey` 缺失或格式不合法
+  - `404 USER_KEY_NOT_FOUND`：白名单不存在该 `userKey`
+  - `403 USER_KEY_INACTIVE`：该 `userKey` 已被禁用
+  - `429 STRICT_RATE_LIMIT_EXCEEDED`：敏感操作触发严格限流（含 `retryAfter` 秒）
+  - `400 REQUEST_TOO_LARGE`：请求体超过 10MB
+  - `500 INTERNAL_ERROR` / `AUTH_ERROR`：服务端内部错误或认证异常
+
+- 错误响应（示例）：
+
+```json
+{
+  "success": false,
+  "error": "STRICT_RATE_LIMIT_EXCEEDED",
+  "message": "敏感操作请求过于频繁，请稍后再试",
+  "details": { "windowMs": 300000, "maxRequests": 10, "retryAfter": 300 },
+  "timestamp": "2025-01-01T00:00:00.000Z"
+}
+```
+
+---
+
 ## 错误响应（统一）
 
 ```json

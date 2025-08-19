@@ -7,6 +7,9 @@ const logger = require('../utils/logger');
 const { asyncHandler } = require('../middlewares/errorHandler');
 const { HTTP_STATUS } = require('../config/constants');
 const AuthorizedUserKey = require('../models/AuthorizedUserKey');
+const UserFingerprintCollection = require('../models/UserFingerprintCollection');
+const UserCollectionMeta = require('../models/UserCollectionMeta');
+const DiffSession = require('../models/DiffSession');
 
 /**
  * 指纹同步控制器（64 位 SHA256）
@@ -495,6 +498,97 @@ class FingerprintSyncController {
       
     } catch (error) {
       logger.errorAndRespond(error, req, res, '强制释放同步锁失败');
+    }
+  });
+
+  /**
+   * 重置 userKey 的所有数据（与 CLI reset-userkey 等效，使用统计不重置）
+   * POST /frkbapi/v1/fingerprint-sync/reset
+   * Body: { userKey: string, notes?: string }
+   * 客户端自发起（无需管理员认证），但需要 API Key + userKey 校验
+   */
+  static resetUserData = asyncHandler(async (req, res) => {
+    const { userKey, notes = '' } = req.body || {};
+
+    try {
+      // 参数与格式校验
+      const validation = UserKeyUtils.validate(userKey);
+      if (!validation.valid) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          error: 'INVALID_USER_KEY',
+          message: validation.error
+        });
+      }
+
+      const normalizedUserKey = validation.normalized;
+      const userKeyRecord = await AuthorizedUserKey.findOne({ userKey: normalizedUserKey });
+      if (!userKeyRecord) {
+        return res.status(HTTP_STATUS.NOT_FOUND).json({
+          success: false,
+          error: 'USER_KEY_NOT_FOUND',
+          message: 'userKey不存在'
+        });
+      }
+
+      // 统计待清理数量
+      const [fingerprintCount, metaCount] = await Promise.all([
+        UserFingerprintCollection.countDocuments({ userKey: normalizedUserKey }),
+        UserCollectionMeta.countDocuments({ userKey: normalizedUserKey })
+      ]);
+
+      // 执行重置：清空指纹与元数据，重置使用统计
+      const [fpResult, metaResult] = await Promise.all([
+        UserFingerprintCollection.deleteMany({ userKey: normalizedUserKey }),
+        UserCollectionMeta.deleteMany({ userKey: normalizedUserKey })
+      ]);
+
+      // 清理与该 userKey 相关的会话与缓存
+      let clearedCache = 0;
+      let deletedSessions = 0;
+      try {
+        clearedCache = cacheService.clearUserCache(normalizedUserKey) || 0;
+        const sessionRes = await DiffSession.deleteMany({ userKey: normalizedUserKey });
+        deletedSessions = sessionRes.deletedCount || 0;
+      } catch (e) {
+        logger.warn('清理缓存或会话时出现问题（已忽略）', {
+          userKey: UserKeyUtils.toShortId(normalizedUserKey),
+          error: e.message
+        });
+      }
+
+      logger.admin('API重置userKey数据（不重置使用统计）', {
+        userKey: UserKeyUtils.toShortId(normalizedUserKey),
+        description: userKeyRecord.description,
+        clearedFingerprints: fpResult.deletedCount,
+        clearedMetas: metaResult.deletedCount,
+        deletedSessions,
+        clearedCache,
+        operator: req.userKey || 'client'
+      });
+
+      return res.json({
+        success: true,
+        message: 'userKey数据已重置',
+        userKey: normalizedUserKey,
+        before: {
+          fingerprintCount,
+          metaCount,
+          usageStats: {
+            totalRequests: userKeyRecord.usageStats.totalRequests,
+            totalSyncs: userKeyRecord.usageStats.totalSyncs
+          }
+        },
+        result: {
+          clearedFingerprints: fpResult.deletedCount,
+          clearedMetas: metaResult.deletedCount,
+          deletedSessions,
+          clearedCache
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      logger.errorAndRespond(error, req, res, '重置userKey数据失败');
     }
   });
 }
