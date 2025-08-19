@@ -446,6 +446,31 @@ POST `/frkbapi/v1/fingerprint-sync/reset`
 
 ---
 
+### 7) 错误日志上报（纯文本）
+POST `/frkbapi/v1/error-report/upload`
+
+- **请求头**:
+  - `Authorization: Bearer <API_SECRET_KEY>`
+  - `Content-Type: text/plain`
+  - `User-Agent: node`（必须是 Node 客户端，或以 `node/` 开头）
+- **请求体**:
+  - 纯文本错误日志内容（客户端本地持有的日志文本原样提交），默认 ≤ 50MB（`ERROR_REPORT_MAX_SIZE` 可调）
+- **限流**:
+  - 严格限流：5 次/5 分钟（按 IP 计数）；同时仍受全局基础限流影响
+  - 返回标准 `RateLimit-*` 响应头；429 时包含 `retryAfter`（秒）
+- **成功返回字段**:
+  - `success` (boolean)
+  - `id` (string): 服务器生成的错误记录 ID
+  - `message` (string): 固定“错误日志已保存”
+  - `timestamp` (string)
+- **可能的错误**:
+  - `401 INVALID_API_KEY`: Authorization 缺失/格式错误/无效
+  - `400 INVALID_REPORT_PAYLOAD`: 未提供文本内容或文本为空
+  - `429 CUSTOM_RATE_LIMIT_EXCEEDED`: 触发严格限流
+  - `500 WRITE_REPORT_FAILED`: 服务器写文件失败
+  - `403 INVALID_CLIENT`: User-Agent 非 Node
+---
+
 ## 典型同步流程（伪代码）
 ```ts
 async function syncAll(userKey: string, clientFingerprints: string[]) {

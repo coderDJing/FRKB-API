@@ -2,6 +2,7 @@ const express = require('express');
 const fingerprintRoutes = require('./fingerprint');
 const healthRoutes = require('./health');
 const logger = require('../utils/logger');
+const errorReportRoutes = require('./errorReport');
 
 const router = express.Router();
 
@@ -41,6 +42,11 @@ router.get('/', (req, res) => {
         detailed: 'GET /frkbapi/v1/health/detailed - 详细健康检查',
         stats: 'GET /frkbapi/v1/health/stats - 系统统计',
         diagnose: 'GET /frkbapi/v1/health/diagnose - 系统诊断'
+      },
+
+      // 错误日志上报
+      errorReport: {
+        upload: 'POST /frkbapi/v1/error-report/upload - 错误日志上报（无需userKey，需API Key，严格限流）'
       }
     },
     
@@ -77,6 +83,9 @@ router.use('/fingerprint-sync', fingerprintRoutes);
 // 健康检查路由
 router.use('/health', healthRoutes);
 
+// 错误日志上报路由（无需 userKey，需 API Key）
+router.use('/error-report', errorReportRoutes);
+
 // 404处理 - 针对/frkbapi/v1路径下的未匹配路由
 router.use('*', (req, res) => {
   logger.warn('API路由未找到', {
@@ -93,7 +102,8 @@ router.use('*', (req, res) => {
     suggestion: '请检查请求路径和方法是否正确',
     availableEndpoints: {
       fingerprintSync: '/frkbapi/v1/fingerprint-sync/*',
-      health: '/frkbapi/v1/health/*'
+      health: '/frkbapi/v1/health/*',
+      errorReport: '/frkbapi/v1/error-report/*'
     },
     timestamp: new Date().toISOString()
   });

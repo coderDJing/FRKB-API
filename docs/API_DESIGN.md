@@ -341,6 +341,38 @@ HTTP 状态：200/400/401/403/404/409/429/500（与实现中的错误处理中�
 
 ---
 
+## 错误日志上报
+
+- 方法与路径：POST `/frkbapi/v1/error-report/upload`
+- 认证：需要 API 密钥（无需 `userKey`）
+- 速率限制：严格限流（5 次/5 分钟，按 IP 计数）
+- 请求头：`Content-Type: text/plain`，且 `User-Agent` 必须为 `node`（或以 `node/` 开头）
+
+- 请求体：纯文本错误日志内容（文本文件原样内容），不需要 JSON；默认 ≤ 50MB（可通过 `ERROR_REPORT_MAX_SIZE` 调整）。
+
+- 成功返回字段：
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| success | boolean | 是否成功 |
+| id | string | 服务器生成的错误记录 ID |
+| message | string | 固定为“错误日志已保存” |
+| timestamp | string | 时间戳 |
+
+- 可能的错误：
+  - `401 INVALID_API_KEY`：缺少/格式错误/无效的 Authorization 头
+  - `400 INVALID_REPORT_PAYLOAD`：缺少 `message`/`stack`
+  - `429 CUSTOM_RATE_LIMIT_EXCEEDED`：触发严格限流
+  - `500 WRITE_REPORT_FAILED`：服务器保存失败
+  - `403 INVALID_CLIENT`：`User-Agent` 非 Node（视为非法来源）
+
+- 服务器行为：
+  - 上报将被保存为独立 `.log` 文件，目录 `logs/error-reports/`（可通过 `ERROR_REPORT_DIR` 配置）。
+  - 文件名：`YYYY-MM-DDTHH-mm-SS-sss_UUID.log`。
+  - 不回显敏感字段，仅返回记录 `id`。
+
+---
+
 ## 快速开始（客户端最小示例）
 
 以下以 `BASE_URL` 表示服务器地址（如 `http://localhost:3001`），统一前缀 `PREFIX=/frkbapi/v1/fingerprint-sync`。
