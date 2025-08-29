@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const { v4: uuidv4 } = require('uuid');
-const { COLLECTIONS } = require('../config/constants');
+const { COLLECTIONS, LIMITS } = require('../config/constants');
 
 /**
  * 授权用户密钥模型
@@ -75,6 +75,13 @@ const authorizedUserKeySchema = new mongoose.Schema({
       type: String,
       default: ''
     }
+  },
+
+  // 指纹总量上限（每个 userKey 可定制）
+  fingerprintLimit: {
+    type: Number,
+    default: () => (LIMITS?.DEFAULT_MAX_FINGERPRINTS_PER_USER || 200000),
+    min: 0
   },
 
   // 已移除细粒度权限与日配额，仅保留启用/禁用
@@ -195,7 +202,10 @@ authorizedUserKeySchema.statics.createUserKey = async function(options = {}) {
       userKey,
       description: options.description || '新创建的用户密钥',
       createdBy: options.createdBy || 'admin',
-      notes: options.notes || ''
+      notes: options.notes || '',
+      fingerprintLimit: Number.isFinite(options.fingerprintLimit)
+        ? options.fingerprintLimit
+        : (LIMITS?.DEFAULT_MAX_FINGERPRINTS_PER_USER || 200000)
     });
     
     await authKey.save();

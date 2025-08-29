@@ -188,27 +188,43 @@ logger.security = (event, details = {}) => {
   });
 };
 
-// 系统错误处理
+// 系统错误处理（尊重错误对象的状态码/错误码/细节）
 logger.errorAndRespond = (error, req, res, userMessage = '服务器内部错误') => {
+  const statusCode = error.status || error.statusCode || 500;
+  const errorCode = error.code || 'INTERNAL_ERROR';
+  const message = error.message || userMessage || '服务器内部错误';
+
   const errorInfo = {
-    message: error.message,
+    message,
+    code: errorCode,
+    statusCode,
     url: req.originalUrl,
     method: req.method,
-    userKey: req.userKey || 'anonymous'
+    userKey: req.userKey || 'anonymous',
+    details: error.details
   };
-  
+
   // 只在开发环境记录完整堆栈
   if (process.env.NODE_ENV === 'development') {
     errorInfo.stack = error.stack;
   }
-  
+
   logger.error('请求错误', errorInfo);
-  
-  return res.status(500).json({
+
+  const response = {
     success: false,
-    message: userMessage,
-    error: process.env.NODE_ENV === 'development' ? error.message : undefined
-  });
+    error: errorCode,
+    message,
+    ...(error.details ? { details: error.details } : {}),
+    timestamp: new Date().toISOString()
+  };
+
+  // 可选的 requestId（如果上游有注入）
+  if (req && req.id) {
+    response.requestId = req.id;
+  }
+
+  return res.status(statusCode).json(response);
 };
 
 // 系统启动日志

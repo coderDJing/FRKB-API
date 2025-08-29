@@ -5,7 +5,7 @@ const UserKeyUtils = require('../utils/userKeyUtils');
 const HashUtils = require('../utils/hashUtils');
 const logger = require('../utils/logger');
 const { asyncHandler } = require('../middlewares/errorHandler');
-const { HTTP_STATUS } = require('../config/constants');
+const { HTTP_STATUS, LIMITS } = require('../config/constants');
 const AuthorizedUserKey = require('../models/AuthorizedUserKey');
 const UserFingerprintCollection = require('../models/UserFingerprintCollection');
 const UserCollectionMeta = require('../models/UserCollectionMeta');
@@ -73,6 +73,10 @@ class FingerprintSyncController {
           description: authKey.description || '',
           lastUsedAt: authKey.lastUsedAt || null
         },
+        // 顶层返回当前 userKey 的指纹总量上限（只读）
+        limit: Number.isFinite(authKey.fingerprintLimit)
+          ? authKey.fingerprintLimit
+          : (LIMITS?.DEFAULT_MAX_FINGERPRINTS_PER_USER || 200000),
         performance: { validateDuration: duration },
         timestamp: new Date().toISOString()
       });
@@ -115,6 +119,7 @@ class FingerprintSyncController {
         clientCount: count,
         clientHash: hash,
         lastSyncAt: checkResult.lastSyncAt,
+        limit: checkResult.limit,
         performance: {
           checkDuration: duration,
           ...checkResult.performance

@@ -37,6 +37,7 @@ POST `/frkbapi/v1/fingerprint-sync/validate-user-key`
   - `data.isActive` (boolean): 是否启用
   - `data.description` (string): 描述
   - `data.lastUsedAt` (string|null): 最近使用时间（ISO8601）
+  - `limit` (number): 当前 `userKey` 的指纹总量上限（只读）
   - `performance.validateDuration` (number): 校验耗时（毫秒）
   - `timestamp` (string): 服务端时间戳（ISO8601）
 - **成功响应（示例）**:
@@ -46,10 +47,10 @@ POST `/frkbapi/v1/fingerprint-sync/validate-user-key`
   "data": {
     "userKey": "xxxxxxxx-xxxx-4xxx-axxx-xxxxxxxxxxxx",
     "isActive": true,
-    
     "description": "渠道A-设备同步",
     "lastUsedAt": null
   },
+  "limit": 200000,
   "performance": { "validateDuration": 3 },
   "timestamp": "2025-01-01T00:00:00.000Z"
 }

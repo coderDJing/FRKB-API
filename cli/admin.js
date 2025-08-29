@@ -14,6 +14,7 @@ const DiffSession = require('../src/models/DiffSession');
 const UserKeyUtils = require('../src/utils/userKeyUtils');
 const HashUtils = require('../src/utils/hashUtils');
 const logger = require('../src/utils/logger');
+const { LIMITS } = require('../src/config/constants');
 
 /**
  * FRKB-API 管理员CLI工具
@@ -225,6 +226,7 @@ async function showUserKey(userKeyOrShortId) {
   console.log(`📅 创建时间: ${userKey.createdAt.toISOString()}`);
   console.log(`🔄 更新时间: ${userKey.updatedAt.toISOString()}`);
   console.log(`✅ 状态: ${userKey.isActive ? '活跃' : '已禁用'}`);
+  console.log(`📈 指纹上限: ${(userKey.fingerprintLimit || LIMITS.DEFAULT_MAX_FINGERPRINTS_PER_USER).toLocaleString()} 条`);
   
   console.log(`⏰ 过期时间: 永不过期`);
   
@@ -589,6 +591,54 @@ async function resetUserKey(userKeyOrShortId, options) {
 }
 
 /**
+ * 设置/更新某个 userKey 的指纹上限（单位：万）
+ */
+async function setFingerprintLimit(userKeyOrShortId, limitWan) {
+  console.log('🛠️  正在设置指纹上限...');
+  const AuthorizedUserKey = require('../src/models/AuthorizedUserKey');
+
+  const parsedWan = parseInt(limitWan, 10);
+  if (!Number.isFinite(parsedWan) || parsedWan <= 0) {
+    throw new Error('无效的上限数值，请使用正整数（单位：万）');
+  }
+  const absLimit = parsedWan * 10000;
+
+  // 解析短ID
+  let targetUserKey = userKeyOrShortId;
+  if (userKeyOrShortId.length === 8) {
+    const keys = await AuthorizedUserKey.find({
+      userKey: new RegExp(`^${userKeyOrShortId}`, 'i')
+    });
+    if (keys.length === 0) {
+      throw new Error('未找到匹配的userKey');
+    } else if (keys.length > 1) {
+      console.log('⚠️  找到多个匹配的userKey:');
+      keys.forEach(k => {
+        console.log(`   ${UserKeyUtils.toShortId(k.userKey)} - ${k.description}`);
+      });
+      throw new Error('请提供更完整的userKey');
+    }
+    targetUserKey = keys[0].userKey;
+  }
+
+  const res = await AuthorizedUserKey.updateOne(
+    { userKey: targetUserKey },
+    { $set: { fingerprintLimit: absLimit, updatedAt: new Date() } }
+  );
+
+  if (res.matchedCount === 0) {
+    throw new Error('userKey不存在');
+  }
+
+  console.log(`✅ 已设置 ${UserKeyUtils.toShortId(targetUserKey)} 的指纹上限为 ${absLimit.toLocaleString()} 条 (${parsedWan} 万)`);
+  logger.admin('CLI设置指纹上限', {
+    userKey: UserKeyUtils.toShortId(targetUserKey),
+    limit: absLimit,
+    operator: process.env.USER || 'admin'
+  });
+}
+
+/**
  * 清理无效数据：无主指纹、无主/空的元数据
  * - 无主 指纹: 在 AuthorizedUserKey 中不存在的 userKey 对应的指纹数据
  * - 无主 meta: 在 AuthorizedUserKey 中不存在的 userKey 的 meta
@@ -787,6 +837,14 @@ program
     return resetUserKey(userkey, options);
   }));
 
+// 设置指纹上限命令（单位：万）
+program
+  .command('set-fplimit <userkey> <limitWan>')
+  .description('设置某个 userKey 的指纹总量上限，单位为万')
+  .action(withErrorHandling((userkey, limitWan) => {
+    return setFingerprintLimit(userkey, limitWan);
+  }));
+
 // 帮助信息
 program
   .command('help-examples')
@@ -810,6 +868,10 @@ program
 📊 系统管理:
    node cli/admin.js status
    node cli/admin.js cleanup
+
+📈 指纹上限管理:
+   # 将指纹上限设置为30万（单位：万）
+   node cli/admin.js set-fplimit 550e8400 30
 
 🗑️  危险操作:
    node cli/admin.js delete 550e8400 --confirm

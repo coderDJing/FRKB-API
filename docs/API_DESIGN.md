@@ -11,6 +11,7 @@
 - 会话 TTL：差异会话有效期 5 分钟（`SYNC_CONFIG.DIFF_SESSION_TTL`）
 - 指纹规范：64 位十六进制（SHA256），小写；数组必须去重，否则请求会因重复项被拒绝
 - 批量大小：`BATCH_SIZE` 源自服务端配置（环境变量 `BATCH_SIZE`，默认 1000）
+ - 指纹总量上限：默认每个 `userKey` 最多 200,000 条，可由管理员为单个 `userKey` 调整
 
 ---
 
@@ -38,6 +39,7 @@
 | clientCount | number | 回显客户端数量 |
 | clientHash | string | 回显客户端哈希 |
 | lastSyncAt | string | 上次同步时间 |
+| limit | number | 该 `userKey` 的指纹上限（条）|
 | performance | object | 性能指标（毫秒） |
 | timestamp | string | 服务端时间戳 |
 
@@ -62,6 +64,7 @@
 | data.permissions | object | 已移除（仅保留启用/禁用状态） |
 | data.description | string | 描述信息 |
 | data.lastUsedAt | string/null | 最近使用时间 |
+| limit | number | 当前 `userKey` 的指纹总量上限（只读） |
 | performance | object | `{ validateDuration }` |
 | timestamp | string | 时间戳 |
 
@@ -97,8 +100,14 @@
 | bloomFilterStats | object/null | 布隆过滤器统计（启用时）|
 | performance | object | 性能指标 |
 | timestamp | string | 时间戳 |
+ 
+错误（与本端点相关的新增）：
+- `400 FINGERPRINT_LIMIT_EXCEEDED`：若“服务器现有 + 客户端需新增”估算后超过上限，直接拒绝；`details` 包括 `{ phase: 'analyze_diff', limit, serverTotal, clientTotal, pendingAdd, finalTotal }`
 
 说明：此前文档中的 `missingOnClient`/`missingOnServer` 字段已更正为 `serverMissingFingerprints` 与 `serverExistingFingerprints`，请以此为准。
+ 
+错误（与本端点相关的新增）：
+- `400 FINGERPRINT_LIMIT_EXCEEDED`：若“当前服务端数量 + 本批待新增数”将超过上限，则直接拒绝；`details` 包括 `{ phase: 'bidirectional_diff', limit, currentServerCount, requestedAddCount, allowedAddCount }`
 
 ---
 
@@ -127,6 +136,7 @@
 
 说明：
 - 口径：`duplicateCount` 仅统计“服务器已存在”的重复；若请求体内存在重复指纹，服务端将以 400 校验错误直接拒绝（客户端需在提交前去重）。
+ - 上限：若“当前服务端数量 + 本次唯一新增数”将超过上限，返回 `400 FINGERPRINT_LIMIT_EXCEEDED`；`details` 包括 `{ phase: 'batch_add', limit, currentCount, uniqueNewCount, allowedAddCount }`
 
 ---
 
@@ -320,6 +330,7 @@ curl -X POST "$BASE_URL/frkbapi/v1/fingerprint-sync/reset" \
 - `RATE_LIMIT_EXCEEDED`、`STRICT_RATE_LIMIT_EXCEEDED`
 - `VALIDATION_ERROR`、`INVALID_FINGERPRINT_FORMAT`、`REQUEST_TOO_LARGE`
 - `DIFF_SESSION_NOT_FOUND`（会话过期/不存在）、`INTERNAL_ERROR`
+ - `FINGERPRINT_LIMIT_EXCEEDED`（指纹总量超过上限）
 
 HTTP 状态：200/400/401/403/404/409/429/500（与实现中的错误处理中间件一致）。
 
