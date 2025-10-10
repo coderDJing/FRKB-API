@@ -90,19 +90,20 @@ class FingerprintSyncController {
    */
   static checkSyncRequired = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, count, hash } = req.body;
+    const { userKey, count, hash, mode } = req.body;
     
     try {
       logger.apiRequest(req, res, 0); // 开始记录
       
-      // 调用同步服务进行预检查
-      const checkResult = await syncService.checkSyncRequired(userKey, count, hash);
+      // 调用同步服务进行预检查（传递 mode）
+      const checkResult = await syncService.checkSyncRequired(userKey, count, hash, mode);
       
       const duration = Date.now() - startTime;
       
       // 记录API性能
       logger.performance('sync_check', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode,
         needSync: checkResult.needSync,
         reason: checkResult.reason,
         clientCount: count,
@@ -134,6 +135,7 @@ class FingerprintSyncController {
       // 记录失败的性能指标
       logger.performance('sync_check_error', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode: req.body?.mode,
         error: error.message
       });
     }
@@ -145,17 +147,18 @@ class FingerprintSyncController {
    */
   static bidirectionalDiff = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, clientFingerprints, batchIndex, batchSize } = req.body;
+    const { userKey, clientFingerprints, batchIndex, batchSize, mode } = req.body;
     
     try {
       logger.apiRequest(req, res, 0);
       
-      // 调用同步服务进行双向差异检测
+      // 调用同步服务进行双向差异检测（传递 mode）
       const diffResult = await syncService.bidirectionalDiff(
         userKey,
         clientFingerprints,
         batchIndex,
-        batchSize
+        batchSize,
+        mode
       );
       
       const duration = Date.now() - startTime;
@@ -163,6 +166,7 @@ class FingerprintSyncController {
       // 记录API性能
       logger.performance('bidirectional_diff', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode,
         batchIndex,
         clientCount: clientFingerprints.length,
         serverMissing: diffResult.serverMissingFingerprints.length,
@@ -200,6 +204,7 @@ class FingerprintSyncController {
       
       logger.performance('bidirectional_diff_error', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode: req.body?.mode,
         batchIndex,
         error: error.message
       });
@@ -212,18 +217,20 @@ class FingerprintSyncController {
    */
   static batchAdd = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, addFingerprints } = req.body;
+    const { userKey, addFingerprints, mode } = req.body;
     
     try {
       logger.apiRequest(req, res, 0);
       
-      const addResult = await syncService.batchAddFingerprints(userKey, addFingerprints);
+      // 调用同步服务进行批量添加（传递 mode）
+      const addResult = await syncService.batchAddFingerprints(userKey, addFingerprints, mode);
       
       const duration = Date.now() - startTime;
       
       // 记录API性能
       logger.performance('batch_add', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode,
         requestedCount: addFingerprints.length,
         addedCount: addResult.addedCount,
         duplicateCount: addResult.duplicateCount
@@ -231,6 +238,7 @@ class FingerprintSyncController {
       
       // 记录同步操作
       logger.sync(userKey, 'batch_add_complete', {
+        mode,
         added: addResult.addedCount,
         duplicates: addResult.duplicateCount,
         total: addFingerprints.length,
@@ -261,6 +269,7 @@ class FingerprintSyncController {
       
       logger.performance('batch_add_error', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode: req.body?.mode,
         requestedCount: addFingerprints?.length || 0,
         error: error.message
       });
@@ -273,17 +282,19 @@ class FingerprintSyncController {
    */
   static pullDiffPage = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, diffSessionId, pageIndex } = req.body;
+    const { userKey, diffSessionId, pageIndex, mode } = req.body;
     
     try {
       logger.apiRequest(req, res, 0);
       
-      const pullResult = await syncService.pullDiffPage(userKey, diffSessionId, pageIndex);
+      // 调用同步服务拉取差异数据（传递 mode）
+      const pullResult = await syncService.pullDiffPage(userKey, diffSessionId, pageIndex, mode);
       
       const duration = Date.now() - startTime;
       
       logger.performance('pull_diff_page', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode,
         sessionId: diffSessionId.substring(0, 16) + '...',
         pageIndex,
         returnedCount: pullResult.missingFingerprints.length,
@@ -308,6 +319,7 @@ class FingerprintSyncController {
       
       logger.performance('pull_diff_page_error', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode: req.body?.mode,
         sessionId: diffSessionId?.substring(0, 16) + '...',
         pageIndex,
         error: error.message
@@ -321,17 +333,19 @@ class FingerprintSyncController {
    */
   static analyzeDifference = asyncHandler(async (req, res) => {
     const startTime = Date.now();
-    const { userKey, clientFingerprints } = req.body;
+    const { userKey, clientFingerprints, mode } = req.body;
     
     try {
       logger.apiRequest(req, res, 0);
       
-      const analysisResult = await syncService.analyzeDifference(userKey, clientFingerprints);
+      // 调用同步服务进行差异分析（传递 mode）
+      const analysisResult = await syncService.analyzeDifference(userKey, clientFingerprints, mode);
       
       const duration = Date.now() - startTime;
       
       logger.performance('analyze_difference', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode,
         clientCount: clientFingerprints.length,
         clientMissing: analysisResult.diffStats.clientMissingCount,
         serverMissing: analysisResult.diffStats.serverMissingCount
@@ -356,6 +370,7 @@ class FingerprintSyncController {
       
       logger.performance('analyze_difference_error', duration, {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode: req.body?.mode,
         clientCount: clientFingerprints?.length || 0,
         error: error.message
       });
@@ -536,23 +551,24 @@ class FingerprintSyncController {
         });
       }
 
-      // 统计待清理数量
+      // 统计待清理数量（所有 mode）
       const [fingerprintCount, metaCount] = await Promise.all([
         UserFingerprintCollection.countDocuments({ userKey: normalizedUserKey }),
         UserCollectionMeta.countDocuments({ userKey: normalizedUserKey })
       ]);
 
-      // 执行重置：清空指纹与元数据，重置使用统计
+      // 执行重置：清空所有 mode 的指纹与元数据
       const [fpResult, metaResult] = await Promise.all([
         UserFingerprintCollection.deleteMany({ userKey: normalizedUserKey }),
         UserCollectionMeta.deleteMany({ userKey: normalizedUserKey })
       ]);
 
-      // 清理与该 userKey 相关的会话与缓存
+      // 清理与该 userKey 相关的会话、缓存和布隆过滤器（所有 mode）
       let clearedCache = 0;
       let deletedSessions = 0;
       try {
         clearedCache = cacheService.clearUserCache(normalizedUserKey) || 0;
+        bloomFilterService.clearFilter(normalizedUserKey); // 清除所有 mode 的布隆过滤器
         const sessionRes = await DiffSession.deleteMany({ userKey: normalizedUserKey });
         deletedSessions = sessionRes.deletedCount || 0;
       } catch (e) {
@@ -562,13 +578,14 @@ class FingerprintSyncController {
         });
       }
 
-      logger.admin('API重置userKey数据（不重置使用统计）', {
+      logger.admin('API重置userKey数据（清除所有mode，不重置使用统计）', {
         userKey: UserKeyUtils.toShortId(normalizedUserKey),
         description: userKeyRecord.description,
         clearedFingerprints: fpResult.deletedCount,
         clearedMetas: metaResult.deletedCount,
         deletedSessions,
         clearedCache,
+        clearedBloomFilters: true,
         operator: req.userKey || 'client'
       });
 

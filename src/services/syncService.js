@@ -23,12 +23,18 @@ class SyncService {
     logger.info('同步服务已启动');
   }
 
-  // 内部工具：获取指定 userKey 的指纹上限
+  // 内部工具：获取指定 userKey 的指纹上限（全局，两个 mode 共享）
   async getMaxLimitForUser(userKey) {
     const authKey = await AuthorizedUserKey.findOne({ userKey }).lean();
     return (authKey && typeof authKey.fingerprintLimit === 'number')
       ? authKey.fingerprintLimit
       : (LIMITS.DEFAULT_MAX_FINGERPRINTS_PER_USER || 200000);
+  }
+
+  // 内部工具：获取用户在所有 mode 下的指纹总数
+  async getTotalFingerprintCount(userKey) {
+    const count = await UserFingerprintCollection.countDocuments({ userKey });
+    return count;
   }
 
   // 内部工具：构建超限错误
@@ -46,13 +52,15 @@ class SyncService {
    * @param {string} userKey - 用户密钥
    * @param {number} clientCount - 客户端指纹数量
    * @param {string} clientHash - 客户端集合哈希
+   * @param {string} mode - 指纹模式
    * @returns {Promise<Object>} 预检查结果
    */
-  async checkSyncRequired(userKey, clientCount, clientHash) {
+  async checkSyncRequired(userKey, clientCount, clientHash, mode) {
     const startTime = Date.now();
     
     try {
       logger.sync(userKey, 'sync_check_start', {
+        mode,
         clientCount,
         clientHash: clientHash.substring(0, 16) + '...'
       });
@@ -74,12 +82,12 @@ class SyncService {
         };
       }
 
-      // 尝试从缓存获取元数据
-      let serverMeta = cacheService.getUserMeta(userKey);
+      // 尝试从缓存获取元数据（按 mode）
+      let serverMeta = cacheService.getUserMeta(userKey, mode);
       
       if (!serverMeta) {
-        // 从数据库获取或创建元数据
-        const metaDoc = await UserCollectionMeta.getOrCreate(userKey);
+        // 从数据库获取或创建元数据（按 mode）
+        const metaDoc = await UserCollectionMeta.getOrCreate(userKey, mode);
         serverMeta = {
           totalCount: metaDoc.totalCount,
           collectionHash: metaDoc.collectionHash,
@@ -88,18 +96,22 @@ class SyncService {
         };
         
         // 缓存元数据
-        cacheService.setUserMeta(userKey, serverMeta);
+        cacheService.setUserMeta(userKey, mode, serverMeta);
       }
 
-      // 读取该 userKey 的指纹上限（支持自定义覆盖，默认常量）
+      // 读取该 userKey 的指纹上限（全局，两个 mode 共享）
       const maxLimit = await this.getMaxLimitForUser(userKey);
+      
+      // 获取用户在所有 mode 下的指纹总数
+      const totalCount = await this.getTotalFingerprintCount(userKey);
 
-      // 若客户端自身数量已超过上限，则提前阻断
-      if (typeof clientCount === 'number' && clientCount > maxLimit) {
-        throw this.buildLimitError('check', `指纹总量超过上限，允许最大 ${maxLimit}，客户端数量为 ${clientCount}`, {
+      // 若所有 mode 的总数量已超过上限，则提前阻断
+      if (totalCount > maxLimit) {
+        throw this.buildLimitError('check', `指纹总量已超过上限，当前总数 ${totalCount}，上限 ${maxLimit}`, {
           limit: maxLimit,
-          clientCount,
-          serverCount: serverMeta.totalCount
+          totalCount,
+          mode,
+          currentModeCount: serverMeta.totalCount
         });
       }
 
@@ -145,8 +157,8 @@ class SyncService {
           });
 
           try {
-            // 实时重算服务端集合哈希并更新元数据
-            const refreshedMeta = await UserCollectionMeta.updateForUser(userKey, {});
+            // 实时重算服务端集合哈希并更新元数据（按 mode）
+            const refreshedMeta = await UserCollectionMeta.updateForUser(userKey, mode, {});
 
             // 清理相关缓存，确保后续读取为最新
             cacheService.clearUserCache(userKey);
@@ -187,6 +199,7 @@ class SyncService {
       }
 
       logger.sync(userKey, 'sync_check_complete', {
+        mode,
         needSync: result.needSync,
         reason: result.reason,
         serverCount: result.serverCount,
@@ -215,13 +228,15 @@ class SyncService {
    * @param {string[]} clientFingerprints - 客户端指纹数组（当前批次）
    * @param {number} batchIndex - 批次索引
    * @param {number} batchSize - 批次大小
+   * @param {string} mode - 指纹模式
    * @returns {Promise<Object>} 差异检测结果
    */
-  async bidirectionalDiff(userKey, clientFingerprints, batchIndex, batchSize) {
+  async bidirectionalDiff(userKey, clientFingerprints, batchIndex, batchSize, mode) {
     const startTime = Date.now();
     
     try {
       logger.sync(userKey, 'bidirectional_diff_start', {
+        mode,
         batchIndex,
         batchSize,
         clientCount: clientFingerprints.length
@@ -235,10 +250,10 @@ class SyncService {
 
       const normalizedClientFingerprints = validation.validItems;
 
-      // 使用布隆过滤器快速过滤（如果启用）
+      // 使用布隆过滤器快速过滤（如果启用）（按 mode）
       let bloomResult = null;
       if (bloomFilterService.enabled) {
-        bloomResult = await bloomFilterService.batchMightContain(userKey, normalizedClientFingerprints);
+        bloomResult = await bloomFilterService.batchMightContain(userKey, mode, normalizedClientFingerprints);
         
         // 过滤掉不可能存在的指纹，减少数据库查询
          const possibleFingerprints = bloomResult.possible
@@ -247,15 +262,17 @@ class SyncService {
         
         logger.debug('布隆过滤器预过滤', {
           userKey: UserKeyUtils.toShortId(userKey),
+          mode,
           originalCount: normalizedClientFingerprints.length,
           filteredCount: possibleFingerprints.length,
           filteredRatio: `${((normalizedClientFingerprints.length - possibleFingerprints.length) / Math.max(normalizedClientFingerprints.length,1) * 100).toFixed(1)}%`
         });
       }
 
-      // 查询服务端存在的指纹
+      // 查询服务端存在的指纹（按 mode）
       const existingDocs = await UserFingerprintCollection.checkFingerprintExists(
         userKey,
+        mode,
         normalizedClientFingerprints
       );
       const existingSet = new Set(existingDocs.map(doc => doc.fingerprint));
@@ -267,8 +284,8 @@ class SyncService {
       // 如果是第一个批次，初始化会话来处理客户端缺失的指纹
       let sessionInfo = null;
       if (batchIndex === 0) {
-        // 获取服务端的指纹总数（用于估算客户端缺失数量）
-        const serverMeta = await UserCollectionMeta.getOrCreate(userKey);
+        // 获取服务端的指纹总数（用于估算客户端缺失数量）（按 mode）
+        const serverMeta = await UserCollectionMeta.getOrCreate(userKey, mode);
         const serverTotalCount = serverMeta.totalCount;
         
         // 估算客户端缺失的指纹数量
@@ -290,21 +307,21 @@ class SyncService {
         }
       }
 
-       // 上限预检（按批次估计：当前服务器总量 + 本批待新增）
+       // 上限预检（全局上限检查：所有 mode 的总量 + 本批待新增）
       const maxLimitForDiff = await this.getMaxLimitForUser(userKey);
-
-      const serverMetaForLimit = await UserCollectionMeta.getOrCreate(userKey);
-      const currentServerCount = serverMetaForLimit.totalCount || 0;
+      const totalCountAllModes = await this.getTotalFingerprintCount(userKey);
       const potentialAddThisBatch = serverMissingFingerprints.length;
-      if (currentServerCount + potentialAddThisBatch > maxLimitForDiff) {
+      
+      if (totalCountAllModes + potentialAddThisBatch > maxLimitForDiff) {
         throw this.buildLimitError(
           'bidirectional_diff',
-          `指纹总量超过上限：当前${currentServerCount}，本批待新增${potentialAddThisBatch}，上限${maxLimitForDiff}`,
+          `指纹总量超过上限：当前所有模式总数${totalCountAllModes}，本批待新增${potentialAddThisBatch}，上限${maxLimitForDiff}`,
           {
             limit: maxLimitForDiff,
-            currentServerCount,
+            totalCountAllModes,
+            mode,
             requestedAddCount: potentialAddThisBatch,
-            allowedAddCount: Math.max(0, maxLimitForDiff - currentServerCount)
+            allowedAddCount: Math.max(0, maxLimitForDiff - totalCountAllModes)
           }
         );
       }
@@ -327,6 +344,7 @@ class SyncService {
       };
 
       logger.sync(userKey, 'bidirectional_diff_complete', {
+        mode,
         batchIndex,
         serverMissing: serverMissingFingerprints.length,
         serverExisting: serverExistingFingerprints.length,
@@ -354,9 +372,10 @@ class SyncService {
    * 将客户端的新指纹添加到服务端
    * @param {string} userKey - 用户密钥
    * @param {string[]} addFingerprints - 要添加的指纹数组
+   * @param {string} mode - 指纹模式
    * @returns {Promise<Object>} 添加结果
    */
-  async batchAddFingerprints(userKey, addFingerprints) {
+  async batchAddFingerprints(userKey, addFingerprints, mode) {
     const startTime = Date.now();
     
     try {
@@ -364,6 +383,7 @@ class SyncService {
       await this.acquireSyncLock(userKey, 'batch_add');
       
       logger.sync(userKey, 'batch_add_start', {
+        mode,
         count: addFingerprints.length
       });
 
@@ -375,34 +395,34 @@ class SyncService {
 
       const normalizedFingerprints = validation.validItems;
 
-      // 上限严格校验：计算唯一新增数量
+      // 上限严格校验：计算全局唯一新增数量
       const maxLimitForAdd = await this.getMaxLimitForUser(userKey);
+      const totalCountAllModes = await this.getTotalFingerprintCount(userKey);
 
-      const [currentCount, existingDocsForAdd] = await Promise.all([
-        UserFingerprintCollection.getUserFingerprintCount(userKey),
-        UserFingerprintCollection.checkFingerprintExists(userKey, normalizedFingerprints)
-      ]);
+      const existingDocsForAdd = await UserFingerprintCollection.checkFingerprintExists(userKey, mode, normalizedFingerprints);
       const existingSetForAdd = new Set(existingDocsForAdd.map(doc => doc.fingerprint));
       const uniqueNewCount = normalizedFingerprints.filter(fp => !existingSetForAdd.has(fp)).length;
-      if (currentCount + uniqueNewCount > maxLimitForAdd) {
-        throw this.buildLimitError('batch_add', `指纹总量超过上限，当前 ${currentCount}，请求新增唯一 ${uniqueNewCount}，上限 ${maxLimitForAdd}`, {
+      
+      if (totalCountAllModes + uniqueNewCount > maxLimitForAdd) {
+        throw this.buildLimitError('batch_add', `指纹总量超过上限，当前所有模式总数 ${totalCountAllModes}，请求新增唯一 ${uniqueNewCount}，上限 ${maxLimitForAdd}`, {
           limit: maxLimitForAdd,
-          currentCount,
+          totalCountAllModes,
+          mode,
           uniqueNewCount,
-          allowedAddCount: Math.max(0, maxLimitForAdd - currentCount)
+          allowedAddCount: Math.max(0, maxLimitForAdd - totalCountAllModes)
         });
       }
 
-      // 批量添加到数据库
-      const addResult = await UserFingerprintCollection.addBatch(userKey, normalizedFingerprints);
+      // 批量添加到数据库（按 mode）
+      const addResult = await UserFingerprintCollection.addBatch(userKey, mode, normalizedFingerprints);
 
-      // 更新用户元数据
+      // 更新用户元数据（按 mode）
       const updateResult = { added: addResult.insertedCount, duration: Date.now() - startTime };
-      await UserCollectionMeta.updateForUser(userKey, updateResult);
+      await UserCollectionMeta.updateForUser(userKey, mode, updateResult);
 
-      // 更新布隆过滤器
+      // 更新布隆过滤器（按 mode）
       if (bloomFilterService.enabled && addResult.insertedCount > 0) {
-        await bloomFilterService.addFingerprints(userKey, normalizedFingerprints);
+        await bloomFilterService.addFingerprints(userKey, mode, normalizedFingerprints);
       }
 
       // 清除相关缓存
@@ -419,6 +439,7 @@ class SyncService {
       };
 
       logger.sync(userKey, 'batch_add_complete', {
+        mode,
         added: result.addedCount,
         duplicates: result.duplicateCount,
         duration: `${Date.now() - startTime}ms`
@@ -449,19 +470,21 @@ class SyncService {
    * @param {string} userKey - 用户密钥
    * @param {string} sessionId - 差异会话ID
    * @param {number} pageIndex - 页码
+   * @param {string} mode - 指纹模式
    * @returns {Promise<Object>} 分页结果
    */
-  async pullDiffPage(userKey, sessionId, pageIndex) {
+  async pullDiffPage(userKey, sessionId, pageIndex, mode) {
     const startTime = Date.now();
     
     try {
       logger.sync(userKey, 'pull_diff_page_start', {
+        mode,
         sessionId: sessionId.substring(0, 16) + '...',
         pageIndex
       });
 
-      // 获取会话信息（持久化读取）
-      let sessionInfo = await DiffSession.findOne({ sessionId }).lean();
+      // 获取会话信息（持久化读取）（校验 mode 匹配）
+      let sessionInfo = await DiffSession.findOne({ sessionId, mode }).lean();
       if (!sessionInfo) {
         const err = new Error('差异会话已过期或不存在');
         err.status = HTTP_STATUS.NOT_FOUND;
@@ -518,6 +541,7 @@ class SyncService {
       };
 
       logger.sync(userKey, 'pull_diff_page_complete', {
+        mode,
         sessionId: sessionId.substring(0, 16) + '...',
         pageIndex,
         returnedCount: missingFingerprints.length,
@@ -546,13 +570,15 @@ class SyncService {
    * 分析客户端和服务端的完整差异（适用于客户端发送完整指纹列表的场景）
    * @param {string} userKey - 用户密钥
    * @param {string[]} clientFingerprints - 客户端完整指纹数组
+   * @param {string} mode - 指纹模式
    * @returns {Promise<Object>} 差异分析结果
    */
-  async analyzeDifference(userKey, clientFingerprints) {
+  async analyzeDifference(userKey, clientFingerprints, mode) {
     const startTime = Date.now();
     
     try {
       logger.sync(userKey, 'analyze_diff_start', {
+        mode,
         clientCount: clientFingerprints.length
       });
 
@@ -564,16 +590,20 @@ class SyncService {
 
       const normalizedClientFingerprints = validation.validItems;
 
-      // 获取服务端和客户端的差异
-      const diffResult = await UserFingerprintCollection.findMissingFingerprints(userKey, normalizedClientFingerprints);
+      // 获取服务端和客户端的差异（按 mode）
+      const diffResult = await UserFingerprintCollection.findMissingFingerprints(userKey, mode, normalizedClientFingerprints);
 
-      // 上限严格校验：预计最终总量 = 服务器现有 + 客户端需新增
+      // 上限严格校验：预计最终总量 = 所有 mode 的现有总量 + 客户端需新增
       const maxLimitForAnalyze = await this.getMaxLimitForUser(userKey);
+      const totalCountAllModes = await this.getTotalFingerprintCount(userKey);
       const pendingAdd = diffResult.missingInServer.length;
-      const finalTotal = (diffResult.totalServer || 0) + pendingAdd;
+      const finalTotal = totalCountAllModes + pendingAdd;
+      
       if (finalTotal > maxLimitForAnalyze) {
-        throw this.buildLimitError('analyze_diff', `指纹总量超过上限：预计总量 ${finalTotal}，上限 ${maxLimitForAnalyze}` , {
+        throw this.buildLimitError('analyze_diff', `指纹总量超过上限：预计总量 ${finalTotal}（当前所有模式${totalCountAllModes} + 待新增${pendingAdd}），上限 ${maxLimitForAnalyze}` , {
           limit: maxLimitForAnalyze,
+          totalCountAllModes,
+          mode,
           serverTotal: diffResult.totalServer || 0,
           clientTotal: diffResult.totalClient || normalizedClientFingerprints.length,
           pendingAdd,
@@ -581,11 +611,12 @@ class SyncService {
         });
       }
 
-      // 创建差异会话（持久化）
+      // 创建差异会话（持久化）（包含 mode）
       const sessionId = `diff_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
       await DiffSession.create({
         sessionId,
         userKey,
+        mode,
         clientFingerprints: normalizedClientFingerprints,
         missingInClient: diffResult.missingInClient,
         missingInServer: diffResult.missingInServer,
@@ -615,25 +646,28 @@ class SyncService {
         }
       };
 
-      // 若判定“无差异”，刷新元数据（重算集合哈希并清缓存），确保后续 /check 立即一致
+      // 若判定"无差异"，刷新元数据（重算集合哈希并清缓存），确保后续 /check 立即一致（按 mode）
       if (diffResult.missingInClient.length === 0 && diffResult.missingInServer.length === 0) {
         try {
-          const refreshedMeta = await UserCollectionMeta.updateForUser(userKey, {});
+          const refreshedMeta = await UserCollectionMeta.updateForUser(userKey, mode, {});
           cacheService.clearUserCache(userKey);
           logger.debug('无差异分析后已刷新元数据', {
             userKey: UserKeyUtils.toShortId(userKey),
+            mode,
             totalCount: refreshedMeta.totalCount,
             collectionHash: (refreshedMeta.collectionHash || '').substring(0, 16) + '...'
           });
         } catch (metaError) {
           logger.warn('无差异分析后刷新元数据失败（忽略，不影响本次响应）', {
             userKey: UserKeyUtils.toShortId(userKey),
+            mode,
             error: metaError.message
           });
         }
       }
 
       logger.sync(userKey, 'analyze_diff_complete', {
+        mode,
         sessionId: sessionId.substring(0, 16) + '...',
         clientMissing: diffResult.missingInClient.length,
         serverMissing: diffResult.missingInServer.length,

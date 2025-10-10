@@ -203,12 +203,12 @@ async function showUserKey(userKeyOrShortId) {
     }
   }
   
-  // 获取使用统计
+  // 获取使用统计（按 mode 分组）
   const fpStats = await UserFingerprintCollection.aggregate([
     { $match: { userKey: userKey.userKey } },
     {
       $group: {
-        _id: null,
+        _id: '$mode',
         totalFingerprints: { $sum: 1 },
         oldest: { $min: '$createdAt' },
         newest: { $max: '$createdAt' }
@@ -216,7 +216,19 @@ async function showUserKey(userKeyOrShortId) {
     }
   ]);
   
-  const fpInfo = fpStats[0] || { totalFingerprints: 0, oldest: null, newest: null };
+  // 组织按 mode 的统计信息
+  const fpByMode = {
+    pcm: fpStats.find(s => s._id === 'pcm') || { totalFingerprints: 0, oldest: null, newest: null },
+    file: fpStats.find(s => s._id === 'file') || { totalFingerprints: 0, oldest: null, newest: null }
+  };
+  
+  // 总计
+  const totalFingerprints = fpByMode.pcm.totalFingerprints + fpByMode.file.totalFingerprints;
+  const fpInfo = {
+    totalFingerprints,
+    oldest: [fpByMode.pcm.oldest, fpByMode.file.oldest].filter(Boolean).sort()[0] || null,
+    newest: [fpByMode.pcm.newest, fpByMode.file.newest].filter(Boolean).sort().reverse()[0] || null
+  };
   
   // 显示详细信息
   console.log('\n📋 userKey详细信息:\n');
@@ -239,7 +251,9 @@ async function showUserKey(userKeyOrShortId) {
   console.log(`   最后IP: ${userKey.usageStats.lastIpAddress || 'N/A'}`);
   
   console.log('\n📦 数据统计:');
-  console.log(`   指纹数量: ${fpInfo.totalFingerprints}`);
+  console.log(`   指纹总数: ${fpInfo.totalFingerprints}`);
+  console.log(`   ├─ PCM 模式: ${fpByMode.pcm.totalFingerprints}`);
+  console.log(`   └─ FILE 模式: ${fpByMode.file.totalFingerprints}`);
   if (fpInfo.oldest) {
     console.log(`   最早数据: ${fpInfo.oldest.toISOString()}`);
   }
@@ -307,7 +321,7 @@ async function getSystemStatus() {
     UserFingerprintCollection.aggregate([
       {
         $group: {
-          _id: null,
+          _id: '$mode',
           totalFingerprints: { $sum: 1 },
           uniqueUsers: { $addToSet: '$userKey' }
         }
@@ -326,7 +340,17 @@ async function getSystemStatus() {
     ])
   ]);
   
-  const aggInfo = fpStats[0] || { totalFingerprints: 0, uniqueUsers: [] };
+  // 处理按 mode 分组的统计
+  const fpByMode = {
+    pcm: fpStats.find(s => s._id === 'pcm') || { totalFingerprints: 0, uniqueUsers: [] },
+    file: fpStats.find(s => s._id === 'file') || { totalFingerprints: 0, uniqueUsers: [] }
+  };
+  
+  const aggInfo = {
+    totalFingerprints: fpByMode.pcm.totalFingerprints + fpByMode.file.totalFingerprints,
+    uniqueUsers: [...new Set([...fpByMode.pcm.uniqueUsers, ...fpByMode.file.uniqueUsers])]
+  };
+  
   const metaInfo = metaStats[0] || { totalMetas: 0, totalFingerprintCount: 0, avgFingerprintCount: 0, lastSync: null };
   
   console.log('\n🏥 系统健康状态:\n');
@@ -347,6 +371,8 @@ async function getSystemStatus() {
   // 指纹数据统计
   console.log('\n📦 数据统计:');
   console.log(`   总指纹数量: ${aggInfo.totalFingerprints.toLocaleString()}`);
+  console.log(`   ├─ PCM 模式: ${fpByMode.pcm.totalFingerprints.toLocaleString()}`);
+  console.log(`   └─ FILE 模式: ${fpByMode.file.totalFingerprints.toLocaleString()}`);
   console.log(`   有数据用户: ${aggInfo.uniqueUsers.length}`);
   console.log(`   元数据记录: ${metaInfo.totalMetas}`);
   console.log(`   平均指纹数: ${Math.round(metaInfo.avgFingerprintCount).toLocaleString()}`);

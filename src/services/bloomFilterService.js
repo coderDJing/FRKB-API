@@ -8,11 +8,12 @@ const { BLOOM_FILTER } = require('../config/constants');
 /**
  * 布隆过滤器服务
  * 用于快速判断指纹是否可能存在，减少数据库查询次数
+ * 按 (userKey, mode) 维度管理过滤器
  */
 class BloomFilterService {
   constructor() {
-    this.filters = new Map(); // userKey -> BloomFilter
-    this.filterMetas = new Map(); // userKey -> { size, hashFunctions, createdAt, version }
+    this.filters = new Map(); // `${userKey}:${mode}` -> BloomFilter
+    this.filterMetas = new Map(); // `${userKey}:${mode}` -> { size, hashFunctions, createdAt, version }
     this.enabled = BLOOM_FILTER.ENABLED;
     
     if (!this.enabled) {
@@ -71,24 +72,38 @@ class BloomFilterService {
   }
 
   /**
-   * 为用户初始化布隆过滤器
+   * 生成过滤器键
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
+   * @returns {string} 过滤器键
+   */
+  generateFilterKey(userKey, mode) {
+    return `${userKey}:${mode}`;
+  }
+
+  /**
+   * 为用户和模式初始化布隆过滤器
+   * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {boolean} forceRebuild - 是否强制重建
    * @returns {Promise<BloomFilter>} 布隆过滤器实例
    */
-  async initializeFilter(userKey, forceRebuild = false) {
+  async initializeFilter(userKey, mode, forceRebuild = false) {
     if (!this.enabled) {
       return null;
     }
 
     try {
+      const filterKey = this.generateFilterKey(userKey, mode);
+      
       // 检查是否已有缓存的过滤器
-      if (!forceRebuild && this.filters.has(userKey)) {
-        const filter = this.filters.get(userKey);
-        const meta = this.filterMetas.get(userKey);
+      if (!forceRebuild && this.filters.has(filterKey)) {
+        const filter = this.filters.get(filterKey);
+        const meta = this.filterMetas.get(filterKey);
         
         logger.debug('使用缓存的布隆过滤器', {
           userKey: userKey.substring(0, 8) + '***',
+          mode,
           size: meta?.size || 'unknown',
           createdAt: meta?.createdAt
         });
@@ -96,12 +111,13 @@ class BloomFilterService {
         return filter;
       }
 
-      // 获取用户指纹数量
-      const count = await UserFingerprintCollection.getUserFingerprintCount(userKey);
+      // 获取用户指纹数量（按 mode）
+      const count = await UserFingerprintCollection.getUserFingerprintCount(userKey, mode);
       
       if (count === 0) {
         logger.debug('用户无指纹数据，跳过布隆过滤器初始化', {
-          userKey: userKey.substring(0, 8) + '***'
+          userKey: userKey.substring(0, 8) + '***',
+          mode
         });
         return null;
       }
@@ -114,6 +130,7 @@ class BloomFilterService {
       
       logger.info('布隆过滤器容量计算', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         currentCount: count,
         baseCapacity,
         growthCapacity,
@@ -129,6 +146,7 @@ class BloomFilterService {
       
       logger.info('开始构建布隆过滤器', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         totalFingerprints: count,
         expectedElements,
         batchSize
@@ -136,7 +154,7 @@ class BloomFilterService {
 
       while (skip < count) {
         const docs = await UserFingerprintCollection
-          .find({ userKey })
+          .find({ userKey, mode })
           .select('fingerprint')
           .skip(skip)
           .limit(batchSize)
@@ -153,6 +171,7 @@ class BloomFilterService {
         if (totalLoaded % 10000 === 0) {
           logger.debug('布隆过滤器构建进度', {
             userKey: userKey.substring(0, 8) + '***',
+            mode,
             loaded: totalLoaded,
             total: count,
             progress: `${(totalLoaded / count * 100).toFixed(1)}%`
@@ -161,8 +180,8 @@ class BloomFilterService {
       }
 
       // 缓存过滤器和元数据
-      this.filters.set(userKey, filter);
-      this.filterMetas.set(userKey, {
+      this.filters.set(filterKey, filter);
+      this.filterMetas.set(filterKey, {
         size: filter.bits.length,
         hashFunctions: filter.nbHashes,
         createdAt: new Date(),
@@ -172,6 +191,7 @@ class BloomFilterService {
 
       logger.info('布隆过滤器构建完成', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         loadedElements: totalLoaded,
         filterSize: filter.bits.length,
         hashFunctions: filter.nbHashes,
@@ -179,9 +199,10 @@ class BloomFilterService {
       });
 
       // 异步保存到数据库
-      this.saveFilterToDatabase(userKey, filter).catch(error => {
+      this.saveFilterToDatabase(userKey, mode, filter).catch(error => {
         logger.error('保存布隆过滤器到数据库失败', {
           userKey: userKey.substring(0, 8) + '***',
+          mode,
           error: error.message
         });
       });
@@ -191,6 +212,7 @@ class BloomFilterService {
     } catch (error) {
       logger.error('初始化布隆过滤器失败', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         error: error.message,
         stack: error.stack
       });
@@ -201,20 +223,22 @@ class BloomFilterService {
   /**
    * 检查指纹是否可能存在
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {string} fingerprint - 指纹（SHA256）
    * @returns {Promise<Object>} 检查结果
    */
-  async mightContain(userKey, fingerprint) {
+  async mightContain(userKey, mode, fingerprint) {
     if (!this.enabled) {
       return { possible: true, source: 'bloom_disabled' };
     }
 
     try {
-      let filter = this.filters.get(userKey);
+      const filterKey = this.generateFilterKey(userKey, mode);
+      let filter = this.filters.get(filterKey);
       
       // 如果没有过滤器，尝试初始化
       if (!filter) {
-        filter = await this.initializeFilter(userKey);
+        filter = await this.initializeFilter(userKey, mode);
         
         if (!filter) {
           return { possible: false, source: 'no_data' };
@@ -226,12 +250,13 @@ class BloomFilterService {
       return {
         possible,
         source: 'bloom_filter',
-        meta: this.filterMetas.get(userKey)
+        meta: this.filterMetas.get(filterKey)
       };
 
     } catch (error) {
       logger.error('布隆过滤器检查失败', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         fingerprint: String(fingerprint).substring(0, 8) + '***',
         error: error.message
       });
@@ -244,10 +269,11 @@ class BloomFilterService {
   /**
    * 批量检查指纹是否可能存在
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {string[]} fingerprintArray - 指纹数组
    * @returns {Promise<Object>} 批量检查结果
    */
-  async batchMightContain(userKey, fingerprintArray) {
+  async batchMightContain(userKey, mode, fingerprintArray) {
     if (!this.enabled) {
       return {
         possible: fingerprintArray.map(fp => ({ fingerprint: fp, possible: true, source: 'bloom_disabled' })),
@@ -256,10 +282,11 @@ class BloomFilterService {
     }
 
     try {
-      let filter = this.filters.get(userKey);
+      const filterKey = this.generateFilterKey(userKey, mode);
+      let filter = this.filters.get(filterKey);
       
       if (!filter) {
-        filter = await this.initializeFilter(userKey);
+        filter = await this.initializeFilter(userKey, mode);
         
         if (!filter) {
           return {
@@ -280,6 +307,7 @@ class BloomFilterService {
 
       logger.debug('布隆过滤器批量检查', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         total: fingerprintArray.length,
         possible: possibleCount,
         impossible: impossibleCount,
@@ -294,12 +322,13 @@ class BloomFilterService {
           impossible: impossibleCount,
           filteredRatio: fingerprintArray.length ? (impossibleCount / fingerprintArray.length) : 0
         },
-        meta: this.filterMetas.get(userKey)
+        meta: this.filterMetas.get(filterKey)
       };
 
     } catch (error) {
       logger.error('布隆过滤器批量检查失败', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         count: fingerprintArray.length,
         error: error.message
       });
@@ -315,20 +344,22 @@ class BloomFilterService {
   /**
    * 向过滤器添加新的指纹
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {string[]} fingerprintArray - 指纹数组
    * @returns {Promise<boolean>} 是否成功
    */
-  async addFingerprints(userKey, fingerprintArray) {
+  async addFingerprints(userKey, mode, fingerprintArray) {
     if (!this.enabled) {
       return true;
     }
 
     try {
-      let filter = this.filters.get(userKey);
+      const filterKey = this.generateFilterKey(userKey, mode);
+      let filter = this.filters.get(filterKey);
       
       if (!filter) {
         // 如果没有过滤器，先初始化
-        filter = await this.initializeFilter(userKey);
+        filter = await this.initializeFilter(userKey, mode);
         
         if (!filter) {
           // 创建新的过滤器，使用更合理的容量估算
@@ -338,13 +369,14 @@ class BloomFilterService {
           
           logger.info('为批量添加创建新布隆过滤器', {
             userKey: userKey.substring(0, 8) + '***',
+            mode,
             batchSize,
             expectedElements
           });
           
           filter = this.createFilter(expectedElements);
-          this.filters.set(userKey, filter);
-          this.filterMetas.set(userKey, {
+          this.filters.set(filterKey, filter);
+          this.filterMetas.set(filterKey, {
             size: filter.bits.length,
             hashFunctions: filter.nbHashes,
             createdAt: new Date(),
@@ -360,7 +392,7 @@ class BloomFilterService {
       }
 
       // 更新元数据
-      const meta = this.filterMetas.get(userKey);
+      const meta = this.filterMetas.get(filterKey);
       if (meta) {
         meta.elementCount += fingerprintArray.length;
         meta.lastUpdatedAt = new Date();
@@ -368,6 +400,7 @@ class BloomFilterService {
 
       logger.debug('向布隆过滤器添加指纹', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         addedCount: fingerprintArray.length,
         totalElements: meta?.elementCount || 'unknown'
       });
@@ -377,6 +410,7 @@ class BloomFilterService {
     } catch (error) {
       logger.error('向布隆过滤器添加指纹失败', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         count: fingerprintArray.length,
         error: error.message
       });
@@ -385,32 +419,57 @@ class BloomFilterService {
   }
 
   /**
-   * 清除用户的布隆过滤器
+   * 清除用户的布隆过滤器（支持清除特定 mode 或所有 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式（可选，不传则清除所有 mode）
    */
-  clearFilter(userKey) {
-    if (this.filters.has(userKey)) {
-      this.filters.delete(userKey);
-      this.filterMetas.delete(userKey);
+  clearFilter(userKey, mode = null) {
+    if (mode) {
+      // 清除特定 mode 的过滤器
+      const filterKey = this.generateFilterKey(userKey, mode);
+      if (this.filters.has(filterKey)) {
+        this.filters.delete(filterKey);
+        this.filterMetas.delete(filterKey);
+        
+        logger.info('清除用户布隆过滤器', {
+          userKey: userKey.substring(0, 8) + '***',
+          mode
+        });
+      }
+    } else {
+      // 清除该 userKey 下所有 mode 的过滤器
+      let clearedCount = 0;
+      for (const filterKey of this.filters.keys()) {
+        if (filterKey.startsWith(userKey + ':')) {
+          this.filters.delete(filterKey);
+          this.filterMetas.delete(filterKey);
+          clearedCount++;
+        }
+      }
       
-      logger.info('清除用户布隆过滤器', {
-        userKey: userKey.substring(0, 8) + '***'
-      });
+      if (clearedCount > 0) {
+        logger.info('清除用户所有布隆过滤器', {
+          userKey: userKey.substring(0, 8) + '***',
+          clearedCount
+        });
+      }
     }
   }
 
   /**
    * 获取过滤器统计信息
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @returns {Object|null} 统计信息
    */
-  getFilterStats(userKey) {
+  getFilterStats(userKey, mode) {
     if (!this.enabled) {
       return { enabled: false };
     }
 
-    const filter = this.filters.get(userKey);
-    const meta = this.filterMetas.get(userKey);
+    const filterKey = this.generateFilterKey(userKey, mode);
+    const filter = this.filters.get(filterKey);
+    const meta = this.filterMetas.get(filterKey);
     
     if (!filter || !meta) {
       return null;
@@ -432,12 +491,13 @@ class BloomFilterService {
   /**
    * 保存过滤器到数据库
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {BloomFilter} filter - 布隆过滤器
    * @returns {Promise<boolean>} 是否成功
    */
-  async saveFilterToDatabase(userKey, filter) {
+  async saveFilterToDatabase(userKey, mode, filter) {
     try {
-      const meta = await UserCollectionMeta.getOrCreate(userKey);
+      const meta = await UserCollectionMeta.getOrCreate(userKey, mode);
       
       // 将过滤器序列化为Buffer
       const filterData = Buffer.from(filter.saveAsJSON());
@@ -447,6 +507,7 @@ class BloomFilterService {
       
       logger.debug('布隆过滤器已保存到数据库', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         dataSize: `${(filterData.length / 1024).toFixed(2)} KB`
       });
       
@@ -455,6 +516,7 @@ class BloomFilterService {
     } catch (error) {
       logger.error('保存布隆过滤器到数据库失败', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         error: error.message
       });
       return false;
@@ -464,15 +526,16 @@ class BloomFilterService {
   /**
    * 从数据库加载过滤器
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @returns {Promise<BloomFilter|null>} 布隆过滤器实例
    */
-  async loadFilterFromDatabase(userKey) {
+  async loadFilterFromDatabase(userKey, mode) {
     if (!this.enabled) {
       return null;
     }
 
     try {
-      const meta = await UserCollectionMeta.findOne({ userKey });
+      const meta = await UserCollectionMeta.findOne({ userKey, mode });
       
       if (!meta || !meta.bloomFilter) {
         return null;
@@ -482,9 +545,10 @@ class BloomFilterService {
       const filterJSON = meta.bloomFilter.toString();
       const filter = BloomFilter.fromJSON(JSON.parse(filterJSON));
       
+      const filterKey = this.generateFilterKey(userKey, mode);
       // 缓存过滤器
-      this.filters.set(userKey, filter);
-      this.filterMetas.set(userKey, {
+      this.filters.set(filterKey, filter);
+      this.filterMetas.set(filterKey, {
         size: filter.bits.length,
         hashFunctions: filter.nbHashes,
         createdAt: meta.createdAt,
@@ -494,6 +558,7 @@ class BloomFilterService {
       
       logger.info('从数据库加载布隆过滤器', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         size: filter.bits.length,
         hashFunctions: filter.nbHashes
       });
@@ -503,6 +568,7 @@ class BloomFilterService {
     } catch (error) {
       logger.error('从数据库加载布隆过滤器失败', {
         userKey: userKey.substring(0, 8) + '***',
+        mode,
         error: error.message
       });
       return null;
@@ -526,9 +592,9 @@ class BloomFilterService {
       return stats;
     }
 
-    for (const [userKey, meta] of this.filterMetas.entries()) {
+    for (const [filterKey, meta] of this.filterMetas.entries()) {
       const filterStats = {
-        userKey: userKey.substring(0, 8) + '***',
+        filterKey: filterKey.substring(0, 16) + '...', // 显示部分 key
         size: meta.size,
         elementCount: meta.elementCount,
         memoryUsage: meta.size / 8 // 字节

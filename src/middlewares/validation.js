@@ -193,6 +193,21 @@ const validateCount = () => [
 ];
 
 /**
+ * mode验证规则（pcm 或 file）
+ */
+const validateMode = () => [
+  body('mode')
+    .notEmpty()
+    .withMessage('mode参数不能为空')
+    .isString()
+    .withMessage('mode必须是字符串')
+    .isIn(['pcm', 'file'])
+    .withMessage('mode必须是pcm或file')
+    .toLowerCase(),
+  handleValidationErrors
+];
+
+/**
  * 分页参数验证规则
  */
 const validatePagination = () => [
@@ -227,7 +242,8 @@ const validatePagination = () => [
 const validateSyncCheck = () => [
   ...validateUserKey(),
   ...validateCount(),
-  ...validateCollectionHash()
+  ...validateCollectionHash(),
+  ...validateMode()
 ];
 
 /**
@@ -244,7 +260,8 @@ const validateBatchPush = () => [
  */
 const validateDiffAnalysis = () => [
   ...validateUserKey(),
-  ...validateFingerprintArray('clientFingerprints', { minLength: 0, maxLength: 100000 }) // 允许空数组用于完整差异分析与全量拉取
+  ...validateFingerprintArray('clientFingerprints', { minLength: 0, maxLength: 100000 }), // 允许空数组用于完整差异分析与全量拉取
+  ...validateMode()
 ];
 
 /**
@@ -267,6 +284,8 @@ const validatePullDiffPage = () => [
     .isInt({ min: 0 })
     .withMessage('页码必须是非负整数')
     .toInt(),
+  
+  ...validateMode(),
   
   handleValidationErrors
 ];
@@ -292,6 +311,8 @@ const validateBidirectionalDiff = () => [
     .withMessage(`批次大小必须是1-${BATCH_CONFIG.BATCH_SIZE}之间的整数`)
     .toInt(),
   
+  ...validateMode(),
+  
   handleValidationErrors
 ];
 
@@ -301,6 +322,7 @@ const validateBidirectionalDiff = () => [
 const validateBatchAdd = () => [
   ...validateUserKey(),
   ...validateFingerprintArray('addFingerprints', { maxLength: BATCH_CONFIG.BATCH_SIZE }),
+  ...validateMode(),
   handleValidationErrors
 ];
 
@@ -401,6 +423,7 @@ module.exports = {
   validateBatchInfo,
   validateCollectionHash,
   validateCount,
+  validateMode,
   validatePagination,
   validateSyncCheck,
   validateBatchPush,

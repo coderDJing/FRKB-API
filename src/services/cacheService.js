@@ -44,14 +44,18 @@ class CacheService {
   }
 
   /**
-   * 生成缓存键
+   * 生成缓存键（支持 mode 参数）
    * @param {string} type - 缓存类型
    * @param {string} userKey - 用户密钥
-   * @param {string} identifier - 标识符
+   * @param {string} mode - 指纹模式（可选）
+   * @param {string} identifier - 标识符（可选）
    * @returns {string} 缓存键
    */
-  generateKey(type, userKey, identifier = '') {
+  generateKey(type, userKey, mode = null, identifier = '') {
     const shortUserKey = UserKeyUtils.toShortId(userKey);
+    if (mode) {
+      return identifier ? `${type}:${shortUserKey}:${mode}:${identifier}` : `${type}:${shortUserKey}:${mode}`;
+    }
     return identifier ? `${type}:${shortUserKey}:${identifier}` : `${type}:${shortUserKey}`;
   }
 
@@ -354,23 +358,25 @@ class CacheService {
   // === 业务相关的缓存方法 ===
 
   /**
-   * 缓存用户元数据
+   * 缓存用户元数据（按 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {Object} metadata - 元数据
    * @param {number} ttl - 过期时间
    */
-  setUserMeta(userKey, metadata, ttl = this.defaultTTL) {
-    const key = this.generateKey('user_meta', userKey);
+  setUserMeta(userKey, mode, metadata, ttl = this.defaultTTL) {
+    const key = this.generateKey('user_meta', userKey, mode);
     return this.set(key, metadata, ttl);
   }
 
   /**
-   * 获取用户元数据
+   * 获取用户元数据（按 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @returns {Object|null} 元数据
    */
-  getUserMeta(userKey) {
-    const key = this.generateKey('user_meta', userKey);
+  getUserMeta(userKey, mode) {
+    const key = this.generateKey('user_meta', userKey, mode);
     return this.get(key);
   }
 
@@ -405,67 +411,73 @@ class CacheService {
   }
 
   /**
-  * 缓存指纹存在性检查结果
+  * 缓存指纹存在性检查结果（按 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
   * @param {string} fingerprintsHash - 指纹数组的哈希
    * @param {Object} result - 检查结果
    * @param {number} ttl - 过期时间
    */
-  setFingerprintExistCheck(userKey, fingerprintsHash, result, ttl = 300000) { // 5分钟
-    const key = this.generateKey('fingerprint_exist', userKey, fingerprintsHash);
+  setFingerprintExistCheck(userKey, mode, fingerprintsHash, result, ttl = 300000) { // 5分钟
+    const key = this.generateKey('fingerprint_exist', userKey, mode, fingerprintsHash);
     return this.set(key, result, ttl);
   }
 
   /**
-  * 获取指纹存在性检查结果
+  * 获取指纹存在性检查结果（按 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
   * @param {string} fingerprintsHash - 指纹数组的哈希
    * @returns {Object|null} 检查结果
    */
-  getFingerprintExistCheck(userKey, fingerprintsHash) {
-    const key = this.generateKey('fingerprint_exist', userKey, fingerprintsHash);
+  getFingerprintExistCheck(userKey, mode, fingerprintsHash) {
+    const key = this.generateKey('fingerprint_exist', userKey, mode, fingerprintsHash);
     return this.get(key);
   }
 
   /**
-   * 缓存集合哈希
+   * 缓存集合哈希（按 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {string} collectionHash - 集合哈希
    * @param {number} ttl - 过期时间
    */
-  setCollectionHash(userKey, collectionHash, ttl = this.defaultTTL) {
-    const key = this.generateKey('collection_hash', userKey);
+  setCollectionHash(userKey, mode, collectionHash, ttl = this.defaultTTL) {
+    const key = this.generateKey('collection_hash', userKey, mode);
     return this.set(key, collectionHash, ttl);
   }
 
   /**
-   * 获取集合哈希
+   * 获取集合哈希（按 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @returns {string|null} 集合哈希
    */
-  getCollectionHash(userKey) {
-    const key = this.generateKey('collection_hash', userKey);
+  getCollectionHash(userKey, mode) {
+    const key = this.generateKey('collection_hash', userKey, mode);
     return this.get(key);
   }
 
   /**
-   * 清除用户相关的所有缓存
+   * 清除用户相关的所有缓存（包括所有 mode）
    * @param {string} userKey - 用户密钥
    * @returns {number} 删除的数量
    */
   clearUserCache(userKey) {
     const shortUserKey = UserKeyUtils.toShortId(userKey);
+    // 清除所有 mode 的缓存
     return this.deleteByPrefix(`user_meta:${shortUserKey}`) +
            this.deleteByPrefix(`fingerprint_exist:${shortUserKey}`) +
            this.deleteByPrefix(`collection_hash:${shortUserKey}`);
   }
 
   /**
-   * 预热缓存
+   * 预热缓存（按 mode）
    * @param {string} userKey - 用户密钥
+   * @param {string} mode - 指纹模式
    * @param {Object} data - 预热数据
    */
-  async warmupCache(userKey, data = {}) {
+  async warmupCache(userKey, mode, data = {}) {
     if (!this.enabled) {
       return;
     }
@@ -474,21 +486,23 @@ class CacheService {
       const { metadata, collectionHash } = data;
       
       if (metadata) {
-        this.setUserMeta(userKey, metadata);
+        this.setUserMeta(userKey, mode, metadata);
       }
       
       if (collectionHash) {
-        this.setCollectionHash(userKey, collectionHash);
+        this.setCollectionHash(userKey, mode, collectionHash);
       }
       
       logger.debug('缓存预热完成', {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode,
         warmedData: Object.keys(data)
       });
       
     } catch (error) {
       logger.error('缓存预热失败', {
         userKey: UserKeyUtils.toShortId(userKey),
+        mode,
         error: error.message
       });
     }

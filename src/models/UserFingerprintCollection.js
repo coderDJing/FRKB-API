@@ -30,6 +30,14 @@ const userFingerprintCollectionSchema = new mongoose.Schema({
     }
   },
 
+  // 指纹模式（pcm 或 file）
+  mode: {
+    type: String,
+    required: true,
+    enum: ['pcm', 'file'],
+    index: true
+  },
+
   // 创建时间
   createdAt: {
     type: Date,
@@ -48,19 +56,19 @@ const userFingerprintCollectionSchema = new mongoose.Schema({
   versionKey: false
 });
 
-// 复合索引：userKey + fingerprint 组合唯一
-userFingerprintCollectionSchema.index({ userKey: 1, fingerprint: 1 }, { unique: true });
-// 按用户Key查询的索引
-userFingerprintCollectionSchema.index({ userKey: 1, createdAt: -1 });
+// 复合索引：userKey + mode + fingerprint 组合唯一
+userFingerprintCollectionSchema.index({ userKey: 1, mode: 1, fingerprint: 1 }, { unique: true });
+// 按用户Key和模式查询的索引
+userFingerprintCollectionSchema.index({ userKey: 1, mode: 1, createdAt: -1 });
 
 // 实例方法：验证指纹格式
 userFingerprintCollectionSchema.methods.validateFingerprint = function() {
   return /^[a-f0-9]{64}$/i.test(this.fingerprint);
 };
 
-// 静态方法：按用户获取全部（可选项）
-userFingerprintCollectionSchema.statics.findByUserKey = function(userKey, options = {}) {
-  const query = this.find({ userKey });
+// 静态方法：按用户和模式获取全部（可选项）
+userFingerprintCollectionSchema.statics.findByUserKey = function(userKey, mode, options = {}) {
+  const query = this.find({ userKey, mode });
   if (options.limit) query.limit(options.limit);
   if (options.skip) query.skip(options.skip);
   if (options.sort) query.sort(options.sort);
@@ -68,9 +76,10 @@ userFingerprintCollectionSchema.statics.findByUserKey = function(userKey, option
 };
 
 // 静态方法：批量添加指纹
-userFingerprintCollectionSchema.statics.addBatch = async function(userKey, fingerprintArray) {
+userFingerprintCollectionSchema.statics.addBatch = async function(userKey, mode, fingerprintArray) {
   const docs = fingerprintArray.map(fp => ({
     userKey,
+    mode,
     fingerprint: fp.toLowerCase(),
     createdAt: new Date(),
     updatedAt: new Date()
@@ -99,21 +108,22 @@ userFingerprintCollectionSchema.statics.addBatch = async function(userKey, finge
 };
 
 // 静态方法：获取用户指纹总数
-userFingerprintCollectionSchema.statics.getUserFingerprintCount = function(userKey) {
-  return this.countDocuments({ userKey });
+userFingerprintCollectionSchema.statics.getUserFingerprintCount = function(userKey, mode) {
+  return this.countDocuments({ userKey, mode });
 };
 
 // 静态方法：检查指纹是否存在
-userFingerprintCollectionSchema.statics.checkFingerprintExists = function(userKey, fingerprintArray) {
+userFingerprintCollectionSchema.statics.checkFingerprintExists = function(userKey, mode, fingerprintArray) {
   return this.find({
     userKey,
+    mode,
     fingerprint: { $in: fingerprintArray.map(fp => fp.toLowerCase()) }
   }).select('fingerprint').lean();
 };
 
 // 静态方法：获取差异（客户端缺失与服务端缺失）
-userFingerprintCollectionSchema.statics.findMissingFingerprints = async function(userKey, clientFingerprints) {
-  const serverFingerprints = await this.find({ userKey })
+userFingerprintCollectionSchema.statics.findMissingFingerprints = async function(userKey, mode, clientFingerprints) {
+  const serverFingerprints = await this.find({ userKey, mode })
     .select('fingerprint')
     .lean()
     .then(docs => docs.map(doc => doc.fingerprint));

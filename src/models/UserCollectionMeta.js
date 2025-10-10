@@ -11,7 +11,6 @@ const userCollectionMetaSchema = new mongoose.Schema({
   userKey: {
     type: String,
     required: true,
-    unique: true,
     index: true,
     validate: {
       validator: function(v) {
@@ -19,6 +18,14 @@ const userCollectionMetaSchema = new mongoose.Schema({
       },
       message: 'userKey必须是有效的UUID v4格式'
     }
+  },
+
+  // 指纹模式（pcm 或 file）
+  mode: {
+    type: String,
+    required: true,
+    enum: ['pcm', 'file'],
+    index: true
   },
 
   // 指纹集合总数
@@ -100,7 +107,9 @@ const userCollectionMetaSchema = new mongoose.Schema({
   versionKey: false
 });
 
-// 索引优化 (userKey已在schema中定义为unique和index)
+// 复合索引：userKey + mode 组合唯一
+userCollectionMetaSchema.index({ userKey: 1, mode: 1 }, { unique: true });
+// 索引优化
 userCollectionMetaSchema.index({ lastSyncAt: -1 });
 userCollectionMetaSchema.index({ totalCount: 1 });
 
@@ -109,9 +118,9 @@ userCollectionMetaSchema.methods.calculateCollectionHash = async function() {
   try {
   const UserFingerprintCollection = require('./UserFingerprintCollection');
     
-    // 获取所有指纹并排序
+    // 获取所有指纹并排序（按 mode 过滤）
     const fps = await UserFingerprintCollection
-      .find({ userKey: this.userKey })
+      .find({ userKey: this.userKey, mode: this.mode })
       .select('fingerprint')
       .sort({ fingerprint: 1 })
       .lean();
@@ -137,9 +146,10 @@ userCollectionMetaSchema.methods.updateStats = async function(syncResult = {}) {
   try {
     const UserFingerprintCollection = require('./UserFingerprintCollection');
     
-    // 更新总数
+    // 更新总数（按 mode 过滤）
     this.totalCount = await UserFingerprintCollection.countDocuments({ 
-      userKey: this.userKey 
+      userKey: this.userKey,
+      mode: this.mode
     });
     
     // 重新计算集合哈希
@@ -163,9 +173,9 @@ userCollectionMetaSchema.methods.updateStats = async function(syncResult = {}) {
 };
 
   // 静态方法：获取或创建用户元数据
-  userCollectionMetaSchema.statics.getOrCreate = async function(userKey) {
+  userCollectionMetaSchema.statics.getOrCreate = async function(userKey, mode) {
   try {
-    let meta = await this.findOne({ userKey });
+    let meta = await this.findOne({ userKey, mode });
     
     if (!meta) {
       // 创建新的元数据记录（快速路径）：
@@ -173,6 +183,7 @@ userCollectionMetaSchema.methods.updateStats = async function(syncResult = {}) {
       // 首次创建时不进行全量扫描与哈希计算，避免首个 /check 卡顿。
         meta = await this.create({
           userKey,
+          mode,
           totalCount: 0,
           collectionHash: '',
           // 首次初始化不认为发生过同步
@@ -189,9 +200,9 @@ userCollectionMetaSchema.methods.updateStats = async function(syncResult = {}) {
 };
 
 // 静态方法：批量更新元数据
-userCollectionMetaSchema.statics.updateForUser = async function(userKey, syncResult) {
+userCollectionMetaSchema.statics.updateForUser = async function(userKey, mode, syncResult) {
   try {
-    const meta = await this.getOrCreate(userKey);
+    const meta = await this.getOrCreate(userKey, mode);
     await meta.updateStats(syncResult);
     return meta;
   } catch (error) {
@@ -201,9 +212,9 @@ userCollectionMetaSchema.statics.updateForUser = async function(userKey, syncRes
 };
 
 // 静态方法：检查是否需要同步
-userCollectionMetaSchema.statics.needsSync = async function(userKey, clientHash, clientCount) {
+userCollectionMetaSchema.statics.needsSync = async function(userKey, mode, clientHash, clientCount) {
   try {
-    const meta = await this.findOne({ userKey });
+    const meta = await this.findOne({ userKey, mode });
     
     if (!meta) {
       return { needSync: true, reason: 'no_server_data' };
@@ -241,9 +252,9 @@ userCollectionMetaSchema.statics.needsSync = async function(userKey, clientHash,
 };
 
 // 静态方法：获取用户统计信息
-userCollectionMetaSchema.statics.getUserStats = async function(userKey) {
+userCollectionMetaSchema.statics.getUserStats = async function(userKey, mode) {
   try {
-    const meta = await this.findOne({ userKey });
+    const meta = await this.findOne({ userKey, mode });
     
     if (!meta) {
       return {

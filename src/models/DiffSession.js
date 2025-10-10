@@ -17,6 +17,13 @@ const diffSessionSchema = new mongoose.Schema({
       message: 'userKey必须是有效的UUID v4格式'
     }
   },
+  // 指纹模式（pcm 或 file）
+  mode: {
+    type: String,
+    required: true,
+    enum: ['pcm', 'file'],
+    index: true
+  },
   clientFingerprints: { type: [String], default: [] },
   missingInClient: { type: [String], default: [] },
   missingInServer: { type: [String], default: [] },
@@ -32,6 +39,9 @@ const diffSessionSchema = new mongoose.Schema({
   timestamps: { createdAt: 'createdAt', updatedAt: 'updatedAt' },
   versionKey: false
 });
+
+// 添加索引：userKey + mode
+diffSessionSchema.index({ userKey: 1, mode: 1 });
 
 // 在保存之前，确保 expiresAt = createdAt + TTL
 diffSessionSchema.pre('validate', function(next) {
