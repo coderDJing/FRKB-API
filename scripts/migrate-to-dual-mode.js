@@ -19,6 +19,7 @@
 require('dotenv').config();
 const mongoose = require('mongoose');
 const { connectDB, closeDB } = require('../src/config/database');
+const { COLLECTIONS } = require('../src/config/constants');
 
 // 彩色输出
 const colors = {
@@ -96,10 +97,10 @@ async function migrate() {
     logSection('迁移前数据统计');
     
     const collections = {
-      fingerprints: 'user_fingerprints',
-      metas: 'user_collection_meta',
-      sessions: 'diff_sessions',
-      userKeys: 'authorized_user_keys'
+      fingerprints: COLLECTIONS.USER_FINGERPRINTS,
+      metas: COLLECTIONS.USER_META,
+      sessions: COLLECTIONS.DIFF_SESSIONS,
+      userKeys: COLLECTIONS.AUTH_KEYS
     };
 
     const beforeStats = {};
@@ -178,10 +179,10 @@ async function migrate() {
     const reportTable = [
       ['集合名称', '迁移前', '已删除', '迁移后'],
       ['─'.repeat(30), '─'.repeat(10), '─'.repeat(10), '─'.repeat(10)],
-      ['user_fingerprints', beforeStats.fingerprints, migrationResults.fingerprints, 0],
-      ['user_collection_meta', beforeStats.metas, migrationResults.metas, 0],
-      ['diff_sessions', beforeStats.sessions, migrationResults.sessions, 0],
-      ['authorized_user_keys', beforeStats.userKeys, 0, beforeStats.userKeys]
+      [collections.fingerprints, beforeStats.fingerprints, migrationResults.fingerprints, 0],
+      [collections.metas, beforeStats.metas, migrationResults.metas, 0],
+      [collections.sessions, beforeStats.sessions, migrationResults.sessions, 0],
+      [collections.userKeys, beforeStats.userKeys, 0, beforeStats.userKeys]
     ];
 
     console.log();
