@@ -8,8 +8,7 @@
  * 2. 清空 user_collection_meta 集合的所有文档
  * 3. 清空 diff_sessions 集合的所有文档
  * 4. 保留 authorized_user_keys 集合
- * 5. 清空所有缓存（内存缓存和布隆过滤器）
- * 6. 输出迁移报告
+ * 5. 输出迁移报告
  * 
  * 使用方法:
  *   node scripts/migrate-to-dual-mode.js
@@ -17,8 +16,9 @@
  * 注意：此脚本会删除所有指纹数据，请谨慎使用！
  */
 
+require('dotenv').config();
 const mongoose = require('mongoose');
-const { MONGODB_URI } = require('../src/config/database');
+const { connectDB, closeDB } = require('../src/config/database');
 
 // 彩色输出
 const colors = {
@@ -80,9 +80,14 @@ async function migrate() {
   try {
     // 连接数据库
     logSection('连接数据库');
-    logInfo(`连接 MongoDB: ${MONGODB_URI.replace(/:[^:@]+@/, ':***@')}`);
-    
-    await mongoose.connect(MONGODB_URI);
+    const rawUri = process.env.MONGODB_URI || '';
+    const dbName = process.env.MONGODB_DATABASE || '';
+    const printableUri = rawUri
+      ? (rawUri + (dbName || '')).replace(/:[^:@]+@/, ':***@')
+      : '<使用项目数据库配置>';
+    logInfo(`连接 MongoDB: ${printableUri}`);
+
+    await connectDB();
     logSuccess('数据库连接成功');
 
     const db = mongoose.connection.db;
@@ -209,8 +214,7 @@ async function migrate() {
     process.exit(1);
   } finally {
     // 关闭数据库连接
-    await mongoose.connection.close();
-    logInfo('数据库连接已关闭');
+    await closeDB();
   }
 }
 
