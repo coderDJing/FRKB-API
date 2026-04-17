@@ -10,6 +10,7 @@ const AuthorizedUserKey = require('../models/AuthorizedUserKey');
 const UserFingerprintCollection = require('../models/UserFingerprintCollection');
 const UserCollectionMeta = require('../models/UserCollectionMeta');
 const DiffSession = require('../models/DiffSession');
+const UserCuratedArtistSnapshot = require('../models/UserCuratedArtistSnapshot');
 
 /**
  * 指纹同步控制器（64 位 SHA256）
@@ -552,15 +553,17 @@ class FingerprintSyncController {
       }
 
       // 统计待清理数量（所有 mode）
-      const [fingerprintCount, metaCount] = await Promise.all([
+      const [fingerprintCount, metaCount, curatedArtistSnapshot] = await Promise.all([
         UserFingerprintCollection.countDocuments({ userKey: normalizedUserKey }),
-        UserCollectionMeta.countDocuments({ userKey: normalizedUserKey })
+        UserCollectionMeta.countDocuments({ userKey: normalizedUserKey }),
+        UserCuratedArtistSnapshot.findOne({ userKey: normalizedUserKey }).lean()
       ]);
 
       // 执行重置：清空所有 mode 的指纹与元数据
-      const [fpResult, metaResult] = await Promise.all([
+      const [fpResult, metaResult, curatedArtistResult] = await Promise.all([
         UserFingerprintCollection.deleteMany({ userKey: normalizedUserKey }),
-        UserCollectionMeta.deleteMany({ userKey: normalizedUserKey })
+        UserCollectionMeta.deleteMany({ userKey: normalizedUserKey }),
+        UserCuratedArtistSnapshot.deleteOne({ userKey: normalizedUserKey })
       ]);
 
       // 清理与该 userKey 相关的会话、缓存和布隆过滤器（所有 mode）
@@ -583,6 +586,7 @@ class FingerprintSyncController {
         description: userKeyRecord.description,
         clearedFingerprints: fpResult.deletedCount,
         clearedMetas: metaResult.deletedCount,
+        clearedCuratedArtistSnapshots: curatedArtistResult.deletedCount,
         deletedSessions,
         clearedCache,
         clearedBloomFilters: true,
@@ -596,6 +600,7 @@ class FingerprintSyncController {
         before: {
           fingerprintCount,
           metaCount,
+          curatedArtistCount: curatedArtistSnapshot?.totalArtists || 0,
           usageStats: {
             totalRequests: userKeyRecord.usageStats.totalRequests,
             totalSyncs: userKeyRecord.usageStats.totalSyncs
@@ -604,6 +609,7 @@ class FingerprintSyncController {
         result: {
           clearedFingerprints: fpResult.deletedCount,
           clearedMetas: metaResult.deletedCount,
+          clearedCuratedArtistSnapshots: curatedArtistResult.deletedCount,
           deletedSessions,
           clearedCache
         },

@@ -193,6 +193,34 @@ const validateCount = () => [
 ];
 
 /**
+ * 可选的集合数量验证规则
+ */
+const validateOptionalCount = () => [
+  body('count')
+    .optional()
+    .isInt({ min: 0 })
+    .withMessage('count必须是非负整数')
+    .toInt(),
+  handleValidationErrors
+];
+
+/**
+ * 可选的集合哈希验证规则
+ */
+const validateOptionalCollectionHash = () => [
+  body('hash')
+    .optional()
+    .isString()
+    .withMessage('hash必须是字符串')
+    .isLength({ min: 64, max: 64 })
+    .withMessage('hash必须是64位字符')
+    .matches(/^[a-f0-9]{64}$/i)
+    .withMessage('hash必须是有效的SHA256格式')
+    .customSanitizer(value => value.toLowerCase()),
+  handleValidationErrors
+];
+
+/**
  * mode验证规则（pcm 或 file）
  */
 const validateMode = () => [
@@ -206,6 +234,71 @@ const validateMode = () => [
     .toLowerCase(),
   handleValidationErrors
 ];
+
+/**
+ * 精选艺人快照数组验证规则
+ */
+const validateCuratedArtistArray = (fieldName = 'artists', options = {}) => {
+  const {
+    maxLength = 5000,
+    minLength = 0
+  } = options;
+
+  return [
+    body(fieldName)
+      .exists()
+      .withMessage(`${fieldName}不能为空`)
+      .isArray({ min: minLength, max: maxLength })
+      .withMessage(`${fieldName}必须是数组，长度在${minLength}-${maxLength}之间`)
+      .custom((array) => {
+        array.forEach((item, index) => {
+          if (!item || typeof item !== 'object' || Array.isArray(item)) {
+            throw new Error(`${fieldName}[${index}]必须是对象`);
+          }
+
+          const name = String(item.name || '')
+            .trim()
+            .replace(/\s+/g, ' ');
+          if (!name) {
+            throw new Error(`${fieldName}[${index}].name不能为空`);
+          }
+
+          if (name.length > 200) {
+            throw new Error(`${fieldName}[${index}].name长度不能超过200个字符`);
+          }
+
+          if (item.count !== undefined) {
+            const numericCount = Number(item.count);
+            if (!Number.isFinite(numericCount) || numericCount <= 0) {
+              throw new Error(`${fieldName}[${index}].count必须是正整数`);
+            }
+          }
+
+          if (item.fingerprints !== undefined) {
+            if (!Array.isArray(item.fingerprints)) {
+              throw new Error(`${fieldName}[${index}].fingerprints必须是数组`);
+            }
+
+            item.fingerprints.forEach((fingerprint, fingerprintIndex) => {
+              if (typeof fingerprint !== 'string') {
+                throw new Error(`${fieldName}[${index}].fingerprints[${fingerprintIndex}]必须是字符串`);
+              }
+
+              const normalizedFingerprint = fingerprint.trim().toLowerCase();
+              if (!FINGERPRINT_REGEX.test(normalizedFingerprint)) {
+                throw new Error(
+                  `${fieldName}[${index}].fingerprints[${fingerprintIndex}]必须是64位十六进制SHA256`
+                );
+              }
+            });
+          }
+        });
+
+        return true;
+      }),
+    handleValidationErrors
+  ];
+};
 
 /**
  * 分页参数验证规则
@@ -327,6 +420,17 @@ const validateBatchAdd = () => [
 ];
 
 /**
+ * 精选艺人快照同步验证规则
+ */
+const validateCuratedArtistSync = () => [
+  ...validateUserKey(),
+  ...validateCuratedArtistArray('artists', { minLength: 0, maxLength: 5000 }),
+  ...validateOptionalCount(),
+  ...validateOptionalCollectionHash(),
+  handleValidationErrors
+];
+
+/**
  * 自定义验证：检查指纹数组实际内容
  */
 const validateFingerprintArrayContent = (req, res, next) => {
@@ -423,7 +527,10 @@ module.exports = {
   validateBatchInfo,
   validateCollectionHash,
   validateCount,
+  validateOptionalCount,
+  validateOptionalCollectionHash,
   validateMode,
+  validateCuratedArtistArray,
   validatePagination,
   validateSyncCheck,
   validateBatchPush,
@@ -431,6 +538,7 @@ module.exports = {
   validatePullDiffPage,
   validateBidirectionalDiff,
   validateBatchAdd,
+  validateCuratedArtistSync,
   validateFingerprintArrayContent,
   validateRequestSize
 };

@@ -17,8 +17,14 @@
 - 字段：`userKey`（UUID v4，唯一）、`description`、`isActive`、`createdBy`、`lastUsedAt`、`usageStats`、`notes`
 - 索引：`userKey` 唯一；`isActive`、`lastUsedAt`、`createdAt`
 
+4) 精选艺人快照：`UserCuratedArtistSnapshot`（`src/models/UserCuratedArtistSnapshot.js`）
+- 字段：`userKey`（UUID v4，唯一）、`items[]`、`totalArtists`、`totalCount`、`totalFingerprints`、`collectionHash`、`lastSyncAt`
+- `items[]` 子项：`normalizedName`、`name`、`count`、`fingerprints[]`
+- 索引：`userKey` 唯一；`lastSyncAt`、`totalArtists`、`totalCount`
+
 ## 约束与校验
 - `userKey` 必须满足 UUID v4 正则；`fingerprint` 必须为 64 位十六进制（SHA256）
+- 精选艺人快照按归一化艺人名合并；若携带 `fingerprints[]`，服务端按并集去重并用于修正 `count`
 - 所有模型均开启 `timestamps`，并关闭 `versionKey`
 
 ## 建议

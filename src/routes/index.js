@@ -1,5 +1,6 @@
 const express = require('express');
 const fingerprintRoutes = require('./fingerprint');
+const curatedArtistRoutes = require('./curatedArtist');
 const healthRoutes = require('./health');
 const logger = require('../utils/logger');
 const errorReportRoutes = require('./errorReport');
@@ -15,7 +16,7 @@ const router = express.Router();
 router.get('/', (req, res) => {
   res.json({
     success: true,
-    message: '🚀 FRKB API v1 - 指纹集合同步系统 (SHA256)',
+    message: '🚀 FRKB API v1 - 指纹与精选艺人同步系统',
     version: '1.0.0',
     environment: process.env.NODE_ENV,
     timestamp: new Date().toISOString(),
@@ -34,6 +35,10 @@ router.get('/', (req, res) => {
         serviceStats: 'GET /frkbapi/v1/fingerprint-sync/service-stats - 服务统计',
         clearCache: 'DELETE /frkbapi/v1/fingerprint-sync/cache/:userKey - 清除用户缓存',
         forceUnlock: 'DELETE /frkbapi/v1/fingerprint-sync/lock/:userKey - 强制释放同步锁'
+      },
+
+      curatedArtistSync: {
+        sync: 'POST /frkbapi/v1/curated-artist-sync/sync - 精选艺人快照同步'
       },
       
       // 健康检查接口
@@ -80,6 +85,9 @@ router.use((req, res, next) => {
 // 指纹同步路由
 router.use('/fingerprint-sync', fingerprintRoutes);
 
+// 精选艺人同步路由
+router.use('/curated-artist-sync', curatedArtistRoutes);
+
 // 健康检查路由
 router.use('/health', healthRoutes);
 
@@ -102,6 +110,7 @@ router.use('*', (req, res) => {
     suggestion: '请检查请求路径和方法是否正确',
     availableEndpoints: {
       fingerprintSync: '/frkbapi/v1/fingerprint-sync/*',
+      curatedArtistSync: '/frkbapi/v1/curated-artist-sync/*',
       health: '/frkbapi/v1/health/*',
       errorReport: '/frkbapi/v1/error-report/*'
     },

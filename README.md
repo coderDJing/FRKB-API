@@ -1,12 +1,13 @@
-# FRKB-API：指纹（SHA256）集合同步系统
+# FRKB-API：指纹（SHA256）与精选艺人同步系统
 
 ## 项目简介
 
-FRKB-API 是一个高性能的指纹（SHA256）集合同步系统，用于在 Electron 客户端和 Node.js 服务端之间同步大量指纹数据。本后端服务用于为 Electron 前端项目 FRKB Rapid Audio Organization Tool 提供接口支持（仓库：[`FRKB_Rapid-Audio-Organization-Tool`](https://github.com/coderDJing/FRKB_Rapid-Audio-Organization-Tool)）。
+FRKB-API 是一个面向 Electron 客户端的同步后端，用于在 Node.js 服务端与桌面端之间同步音频指纹（SHA256）和精选艺人快照数据。本后端服务用于为 Electron 前端项目 FRKB Rapid Audio Organization Tool 提供接口支持（仓库：[`FRKB_Rapid-Audio-Organization-Tool`](https://github.com/coderDJing/FRKB_Rapid-Audio-Organization-Tool)）。
 
 ### 核心特性
 
 - ✅ **双向同步**：客户端与服务端指纹集合完全一致
+- ✅ **精选艺人同步**：支持同步 `{ name, count, fingerprints[] }` 轻量快照
 - ✅ **高性能**：支持 4-5 万指纹数据，10 用户并发
 - ✅ **安全认证**：API密钥 + userKey白名单三重验证
 - ✅ **批处理**：智能分批传输，减少网络开销
@@ -84,6 +85,7 @@ node cli/admin.js --help
 ## API使用示例（精简）
 
 - 前缀：`/frkbapi/v1/fingerprint-sync`
+- 精选艺人前缀：`/frkbapi/v1/curated-artist-sync`
 - 认证：请求头 `Authorization: Bearer <API_SECRET_KEY>`
 
 常用端点：
@@ -92,6 +94,7 @@ node cli/admin.js --help
 - POST `/add`：批量新增
 - POST `/analyze-diff`：生成差异会话
 - POST `/pull-diff-page`：分页拉取缺失
+- POST `/curated-artist-sync/sync`：同步精选艺人快照
 
 最小示意：
 ```javascript
@@ -106,6 +109,27 @@ await fetch('/frkbapi/v1/fingerprint-sync/check', {
 ```
 
 更多请见：[`docs/API_DESIGN.md`](./docs/API_DESIGN.md)
+
+精选艺人快照最小示意：
+```javascript
+await fetch('/frkbapi/v1/curated-artist-sync/sync', {
+  method: 'POST',
+  headers: {
+    Authorization: 'Bearer <API_SECRET_KEY>',
+    'Content-Type': 'application/json'
+  },
+  body: JSON.stringify({
+    userKey,
+    artists: [
+      {
+        name: 'Daft Punk',
+        count: 3,
+        fingerprints: ['<64hex>', '<64hex>', '<64hex>']
+      }
+    ]
+  })
+});
+```
 
 ## 性能指标
 

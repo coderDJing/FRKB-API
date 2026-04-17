@@ -66,7 +66,7 @@ app.get('/health', HealthController.basicHealth);
 // 根路径
 app.get('/', (req, res) => {
   res.json({
-    message: '🚀 FRKB API 服务正在运行',
+    message: '🚀 FRKB API 服务正在运行（指纹 + 精选艺人同步）',
     version: '1.0.0',
     environment: process.env.NODE_ENV,
     endpoints: {

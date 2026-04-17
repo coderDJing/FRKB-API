@@ -48,6 +48,7 @@ module.exports = {
     USER_KEY_NOT_FOUND: 'USER_KEY_NOT_FOUND',
     INVALID_API_KEY: 'INVALID_API_KEY',
     INVALID_FINGERPRINT_FORMAT: 'INVALID_FINGERPRINT_FORMAT',
+    INVALID_CURATED_ARTIST_SNAPSHOT: 'INVALID_CURATED_ARTIST_SNAPSHOT',
     BATCH_SIZE_EXCEEDED: 'BATCH_SIZE_EXCEEDED',
     SYNC_IN_PROGRESS: 'SYNC_IN_PROGRESS',
     DATABASE_ERROR: 'DATABASE_ERROR',
@@ -73,6 +74,7 @@ module.exports = {
   COLLECTIONS: {
     USER_FINGERPRINTS: 'user_fingerprint_collections',
     USER_META: 'user_collection_metas',
+    USER_CURATED_ARTIST_SNAPSHOTS: 'user_curated_artist_snapshots',
     AUTH_KEYS: 'authorized_user_keys',
     DIFF_SESSIONS: 'diff_sessions'
   },
