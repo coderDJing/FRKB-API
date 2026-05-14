@@ -25,7 +25,8 @@
 		"uuid": "^9.0.1",
 		"crypto": "^1.0.1",
 		"bloom-filters": "^3.0.1",
-		"commander": "^11.1.0"
+		"commander": "^11.1.0",
+		"node-fetch": "^2.7.0"
 	},
 	"devDependencies": {
 		"nodemon": "^3.1.10"

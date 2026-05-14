@@ -3,6 +3,7 @@
 const { program } = require('commander');
 const { v4: uuidv4 } = require('uuid');
 const mongoose = require('mongoose');
+const fetch = require('node-fetch');
 require('dotenv').config();
 
 // 导入模型和工具
@@ -871,6 +872,130 @@ program
     return setFingerprintLimit(userkey, limitWan);
   }));
 
+/**
+ * 数据迁移命令
+ * 从当前服务器导出数据并推送到目标服务器
+ */
+async function migrateData(options) {
+  const targetUrl = options.target;
+  const adminToken = options.adminToken;
+
+  if (!targetUrl) {
+    throw new Error('请提供目标服务器地址：--target <url>');
+  }
+
+  if (!adminToken) {
+    throw new Error('请提供目标服务器管理员令牌：--admin-token <token>');
+  }
+
+  console.log('🚀 开始数据迁移...');
+  console.log(`   目标服务器: ${targetUrl}`);
+  console.log('');
+
+  // 1. 读取本地数据
+  console.log('📦 正在读取本地数据...');
+  const db = mongoose.connection.db;
+
+  const { MIGRATABLE_COLLECTIONS, COLLECTION_LABELS } = require('../src/controllers/migrationController');
+
+  const exportData = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    source: process.env.MONGODB_DATABASE || 'frkb_database',
+    collections: {}
+  };
+
+  let totalDocs = 0;
+
+  for (const collectionName of MIGRATABLE_COLLECTIONS) {
+    const collection = db.collection(collectionName);
+    const docs = await collection.find({}).toArray();
+    exportData.collections[collectionName] = docs;
+    totalDocs += docs.length;
+
+    console.log(`   ├─ ${COLLECTION_LABELS[collectionName]}: ${docs.length} 条`);
+  }
+
+  console.log(`   └─ 总计: ${totalDocs} 条记录`);
+  console.log('');
+
+  if (totalDocs === 0) {
+    console.log('⚠️  本地没有数据需要迁移');
+    return;
+  }
+
+  // 2. 推送到目标服务器
+  console.log('📤 正在推送到目标服务器...');
+
+  const importUrl = `${targetUrl.replace(/\/$/, '')}/frkbapi/v1/admin/migration/import?adminToken=${encodeURIComponent(adminToken)}`;
+
+  const response = await fetch(importUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${process.env.API_SECRET_KEY || ''}`
+    },
+    body: JSON.stringify({
+      adminToken,
+      ...exportData
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`目标服务器返回错误: ${response.status} - ${errorText}`);
+  }
+
+  const result = await response.json();
+
+  if (!result.success) {
+    throw new Error(`导入失败: ${result.message}`);
+  }
+
+  // 3. 显示结果
+  console.log('');
+  console.log('✅ 迁移完成!');
+  console.log('');
+  console.log('📊 迁移统计:');
+
+  const { totalImported, totalSkipped, details } = result.summary;
+  for (const [collectionName, detail] of Object.entries(details)) {
+    if (detail.status === 'no_data') continue;
+    console.log(`   ├─ ${COLLECTION_LABELS[collectionName] || collectionName}: ${detail.imported} 条导入, ${detail.skipped} 条跳过`);
+  }
+
+  console.log(`   └─ 总计: ${totalImported} 条导入, ${totalSkipped} 条跳过`);
+  console.log('');
+  console.log('🎉 数据迁移成功完成!');
+
+  logger.admin('CLI数据迁移完成', {
+    targetUrl,
+    totalDocs,
+    totalImported,
+    totalSkipped,
+    operator: process.env.USER || 'admin'
+  });
+}
+
+// 数据迁移命令
+program
+  .command('migrate')
+  .description('将本地数据迁移到目标服务器（危险操作，建议先停止服务）')
+  .requiredOption('-t, --target <url>', '目标服务器地址（如 http://192.168.1.100:3000）')
+  .requiredOption('--admin-token <token>', '目标服务器的管理员令牌')
+  .option('--force', '跳过确认直接执行')
+  .action(withErrorHandling(async (options) => {
+    if (!options.force) {
+      console.log('⚠️  数据迁移将覆盖目标服务器上的数据!');
+      console.log('   建议先停止目标服务器的服务以确保数据一致性');
+      console.log('');
+      console.log('⏳ 5秒后开始迁移，按 Ctrl+C 取消...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+
+    return migrateData(options);
+  }));
+
 // 帮助信息
 program
   .command('help-examples')
@@ -902,6 +1027,13 @@ program
 🗑️  危险操作:
    node cli/admin.js delete 550e8400 --confirm
    node cli/admin.js reset 550e8400 --confirm --notes "重新开始"
+
+🚀 数据迁移:
+   # 将本地数据迁移到新服务器（先停服再执行）
+   node cli/admin.js migrate --target http://192.168.1.100:3000 --admin-token frkb_admin_token
+
+   # 跳过确认直接执行
+   node cli/admin.js migrate --target http://192.168.1.100:3000 --admin-token frkb_admin_token --force
 
 💡 提示:
    - userKey可以使用前8位短ID进行操作

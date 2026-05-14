@@ -4,6 +4,7 @@ const curatedArtistRoutes = require('./curatedArtist');
 const healthRoutes = require('./health');
 const logger = require('../utils/logger');
 const errorReportRoutes = require('./errorReport');
+const adminRoutes = require('./admin');
 
 const router = express.Router();
 
@@ -52,6 +53,15 @@ router.get('/', (req, res) => {
       // 错误日志上报
       errorReport: {
         upload: 'POST /frkbapi/v1/error-report/upload - 错误日志上报（无需userKey，需API Key，严格限流）'
+      },
+
+      // 管理员接口（需要adminToken）
+      admin: {
+        migrationStatus: 'GET /frkbapi/v1/admin/migration/status - 查看迁移状态',
+        export: 'GET /frkbapi/v1/admin/migration/export - 导出所有数据',
+        exportCollection: 'GET /frkbapi/v1/admin/migration/export/:collection - 导出单个集合',
+        import: 'POST /frkbapi/v1/admin/migration/import - 导入数据',
+        pull: 'POST /frkbapi/v1/admin/migration/pull - 从源服务器拉取数据'
       }
     },
     
@@ -94,6 +104,9 @@ router.use('/health', healthRoutes);
 // 错误日志上报路由（无需 userKey，需 API Key）
 router.use('/error-report', errorReportRoutes);
 
+// 管理员路由（需要 adminToken）
+router.use('/admin', adminRoutes);
+
 // 404处理 - 针对/frkbapi/v1路径下的未匹配路由
 router.use('*', (req, res) => {
   logger.warn('API路由未找到', {
@@ -112,7 +125,8 @@ router.use('*', (req, res) => {
       fingerprintSync: '/frkbapi/v1/fingerprint-sync/*',
       curatedArtistSync: '/frkbapi/v1/curated-artist-sync/*',
       health: '/frkbapi/v1/health/*',
-      errorReport: '/frkbapi/v1/error-report/*'
+      errorReport: '/frkbapi/v1/error-report/*',
+      admin: '/frkbapi/v1/admin/*'
     },
     timestamp: new Date().toISOString()
   });
