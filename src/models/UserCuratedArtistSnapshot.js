@@ -38,6 +38,24 @@ function normalizeFingerprintList(values) {
   return fingerprints;
 }
 
+function compareStableText(left, right) {
+  const leftText = String(left || '');
+  const rightText = String(right || '');
+  if (leftText < rightText) return -1;
+  if (leftText > rightText) return 1;
+  return 0;
+}
+
+function buildCanonicalItems(items) {
+  return items
+    .map((item) => [
+      item.normalizedName,
+      item.count,
+      item.fingerprints
+    ])
+    .sort((left, right) => compareStableText(left[0], right[0]));
+}
+
 function normalizeCuratedArtistItems(values) {
   const merged = new Map();
 
@@ -85,11 +103,7 @@ function normalizeCuratedArtistItems(values) {
 
 function calculateCollectionHash(items) {
   const normalizedItems = normalizeCuratedArtistItems(items);
-  const canonical = normalizedItems.map((item) => [
-    item.normalizedName,
-    item.count,
-    item.fingerprints
-  ]);
+  const canonical = buildCanonicalItems(normalizedItems);
 
   return crypto.createHash('sha256').update(JSON.stringify(canonical), 'utf8').digest('hex');
 }
