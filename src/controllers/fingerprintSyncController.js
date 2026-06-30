@@ -234,7 +234,9 @@ class FingerprintSyncController {
         mode,
         requestedCount: addFingerprints.length,
         addedCount: addResult.addedCount,
-        duplicateCount: addResult.duplicateCount
+        duplicateCount: addResult.duplicateCount,
+        serverCountBefore: addResult.serverCountBefore,
+        serverCountAfter: addResult.serverCountAfter
       });
       
       // 记录同步操作
@@ -250,10 +252,14 @@ class FingerprintSyncController {
         success: true,
         addedCount: addResult.addedCount,
         duplicateCount: addResult.duplicateCount,
+        serverCountBefore: addResult.serverCountBefore,
+        serverCountAfter: addResult.serverCountAfter,
         totalRequested: addResult.totalRequested,
         batchResult: {
           addedCount: addResult.addedCount,
           duplicateCount: addResult.duplicateCount,
+          serverCountBefore: addResult.serverCountBefore,
+          serverCountAfter: addResult.serverCountAfter,
           skippedCount: 0,
           errorCount: 0
         },

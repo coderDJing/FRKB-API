@@ -1,6 +1,41 @@
 const mongoose = require('mongoose');
 const { COLLECTIONS } = require('../config/constants');
 
+const toCount = (value, fallback = 0) => {
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? count : fallback;
+};
+
+const countInsertedIds = (insertedIds) => {
+  if (!insertedIds) return undefined;
+  if (Array.isArray(insertedIds)) return insertedIds.length;
+  if (typeof insertedIds === 'object') return Object.keys(insertedIds).length;
+  return undefined;
+};
+
+const resolveInsertedCount = (result, fallback = 0) => {
+  const insertedIdCount = countInsertedIds(result?.insertedIds);
+  return toCount(
+    result?.insertedCount,
+    toCount(
+      result?.result?.nInserted,
+      toCount(result?.nInserted, toCount(insertedIdCount, fallback))
+    )
+  );
+};
+
+const resolveWriteErrors = (error) => {
+  const candidates = [
+    error?.writeErrors,
+    error?.result?.writeErrors,
+    error?.result?.result?.writeErrors
+  ];
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) return candidate;
+  }
+  return [];
+};
+
 /**
  * 用户指纹集合模型（64 位十六进制 SHA256）
  */
@@ -87,20 +122,24 @@ userFingerprintCollectionSchema.statics.addBatch = async function(userKey, mode,
 
   try {
     const result = await this.insertMany(docs, { ordered: false, rawResult: true });
+    const insertedCount = resolveInsertedCount(result, fingerprintArray.length);
     return {
       success: true,
-      insertedCount: result.insertedCount,
-      duplicateCount: fingerprintArray.length - result.insertedCount
+      insertedCount,
+      duplicateCount: Math.max(0, fingerprintArray.length - insertedCount)
     };
   } catch (error) {
     if (error.code === 11000) {
-      const insertedCount = error.result?.result?.writeErrors ?
-        fingerprintArray.length - error.result.result.writeErrors.length : 0;
+      const writeErrors = resolveWriteErrors(error);
+      const insertedCount = resolveInsertedCount(
+        error.result,
+        Math.max(0, fingerprintArray.length - writeErrors.length)
+      );
       return {
         success: true,
         insertedCount,
-        duplicateCount: fingerprintArray.length - insertedCount,
-        duplicateErrors: error.result?.result?.writeErrors || []
+        duplicateCount: Math.max(0, fingerprintArray.length - insertedCount),
+        duplicateErrors: writeErrors
       };
     }
     throw error;

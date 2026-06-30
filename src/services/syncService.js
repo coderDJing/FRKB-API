@@ -402,6 +402,7 @@ class SyncService {
       const existingDocsForAdd = await UserFingerprintCollection.checkFingerprintExists(userKey, mode, normalizedFingerprints);
       const existingSetForAdd = new Set(existingDocsForAdd.map(doc => doc.fingerprint));
       const uniqueNewCount = normalizedFingerprints.filter(fp => !existingSetForAdd.has(fp)).length;
+      const serverCountBefore = await UserFingerprintCollection.countDocuments({ userKey, mode });
       
       if (totalCountAllModes + uniqueNewCount > maxLimitForAdd) {
         throw this.buildLimitError('batch_add', `指纹总量超过上限，当前所有模式总数 ${totalCountAllModes}，请求新增唯一 ${uniqueNewCount}，上限 ${maxLimitForAdd}`, {
@@ -418,7 +419,7 @@ class SyncService {
 
       // 更新用户元数据（按 mode）
       const updateResult = { added: addResult.insertedCount, duration: Date.now() - startTime };
-      await UserCollectionMeta.updateForUser(userKey, mode, updateResult);
+      const updatedMeta = await UserCollectionMeta.updateForUser(userKey, mode, updateResult);
 
       // 更新布隆过滤器（按 mode）
       if (bloomFilterService.enabled && addResult.insertedCount > 0) {
@@ -433,6 +434,8 @@ class SyncService {
         addedCount: addResult.insertedCount,
         duplicateCount: addResult.duplicateCount,
         totalRequested: normalizedFingerprints.length,
+        serverCountBefore,
+        serverCountAfter: updatedMeta.totalCount,
         performance: {
           addDuration: Date.now() - startTime
         }
