@@ -16,6 +16,20 @@ const PROTOCOL_VERSION = CURATED_LIBRARY_SYNC.PROTOCOL_VERSION;
 const isUuid = (value) => USER_KEY_REGEX.test(String(value || '').trim());
 const isSha = (value) => FINGERPRINT_REGEX.test(String(value || '').trim());
 
+/** Number(null) === 0，空序号不能用 Number() 判断。 */
+function toOptionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const num = typeof value === 'number' ? value : Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function toOptionalPositiveInt(value) {
+  const num = toOptionalNumber(value);
+  if (num === null) return null;
+  const rounded = Math.floor(num);
+  return rounded > 0 ? rounded : null;
+}
+
 function sanitizeNode(raw) {
   const uuid = String(raw?.uuid || '').trim();
   const parentUuid = String(raw?.parentUuid || '').trim();
@@ -23,13 +37,14 @@ function sanitizeNode(raw) {
   const nodeType = raw?.nodeType === 'songList' ? 'songList' : raw?.nodeType === 'dir' ? 'dir' : '';
   if (!isUuid(uuid) || !isUuid(parentUuid) || !name || !nodeType) return null;
   const revision = Number(raw.revision);
+  const updatedAtMs = toOptionalPositiveInt(raw.updatedAtMs);
   return {
     uuid,
     parentUuid,
     name: name.slice(0, 255),
     nodeType,
-    sortOrder: Number.isFinite(Number(raw.sortOrder)) ? Number(raw.sortOrder) : null,
-    updatedAtMs: Number(raw.updatedAtMs) || Date.now(),
+    sortOrder: toOptionalNumber(raw.sortOrder),
+    updatedAtMs: updatedAtMs || Date.now(),
     revision: Number.isFinite(revision) && revision > 0 ? Math.floor(revision) : undefined
   };
 }
@@ -44,15 +59,16 @@ function sanitizeFile(raw) {
     return null;
   }
   const revision = Number(raw.revision);
+  const updatedAtMs = toOptionalPositiveInt(raw.updatedAtMs);
   return {
     fileId,
     parentUuid,
     fileName: fileName.slice(0, 255),
     sha256,
     size,
-    trackNumber: Number.isFinite(Number(raw.trackNumber)) ? Math.floor(Number(raw.trackNumber)) : null,
-    addedAtMs: Number.isFinite(Number(raw.addedAtMs)) ? Number(raw.addedAtMs) : null,
-    updatedAtMs: Number(raw.updatedAtMs) || Date.now(),
+    trackNumber: toOptionalPositiveInt(raw.trackNumber),
+    addedAtMs: toOptionalPositiveInt(raw.addedAtMs),
+    updatedAtMs: updatedAtMs || Date.now(),
     revision: Number.isFinite(revision) && revision > 0 ? Math.floor(revision) : undefined
   };
 }
