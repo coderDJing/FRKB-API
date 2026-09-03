@@ -29,7 +29,7 @@ node cli/admin.js set-fplimit <shortId|fullUUID> <limitWan>   # 设置指纹上�
 # 完全删除 userKey 及其所有数据（不可恢复）
 node cli/admin.js delete-userkey <shortId|fullUUID> --confirm
 
-# 重置 userKey 数据，保留 userKey 但清空所有使用记录
+# 重置 userKey 数据，保留 userKey 但清空指纹/精选艺人（第一期不会删除精选库音频）
 node cli/admin.js reset-userkey <shortId|fullUUID> --confirm --notes "重新开始"
 
 # 使用 --force 跳过5秒等待期
@@ -46,8 +46,15 @@ node cli/admin.js cleanup
 - 命令实际以 `cli/admin.js` 为准；userKey 永不过期，如需停用请使用 deactivate
 - **危险操作说明**：
   - `delete-userkey`: 完全删除 userKey 记录及所有相关数据，不可恢复
-  - `reset-userkey`: 保留 userKey 但清空所有指纹数据和使用统计，恢复到刚创建状态
+  - `reset-userkey`: 保留 userKey 但清空所有指纹数据和使用统计，恢复到刚创建状态。第一期**不会**删除精选库音频文件。
   - 两个命令都需要 `--confirm` 参数确认，默认有5秒等待期防止误操作
+
+- 换服务器迁移
+```bash
+node cli/admin.js migrate --target http://new-host:3001 --admin-token <token>
+```
+  - Mongo 文档（含精选库快照/blob 元数据）走 JSON；mp3 必须另外按 sha256 拷贝（本命令会随后 PUT `/admin/migration/blob/:sha256`）。
+  - **只跑旧的 Mongo export/import、不拷 `CURATED_LIBRARY_BLOB_ROOT`，精选库会丢音频**：新机上能看见歌单，客户端却下不到文件。不要把这种半迁移当成成功。
 
 ## 使用前置
 - 需配置 `MONGODB_URI` 等数据库连接环境变量

@@ -4,6 +4,9 @@ const { program } = require('commander');
 const { v4: uuidv4 } = require('uuid');
 const mongoose = require('mongoose');
 const fetch = require('node-fetch');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const path = require('path');
 require('dotenv').config();
 
 // 导入模型和工具
@@ -15,7 +18,8 @@ const DiffSession = require('../src/models/DiffSession');
 const UserKeyUtils = require('../src/utils/userKeyUtils');
 const HashUtils = require('../src/utils/hashUtils');
 const logger = require('../src/utils/logger');
-const { LIMITS } = require('../src/config/constants');
+const UserCuratedArtistSnapshot = require('../src/models/UserCuratedArtistSnapshot');
+const { LIMITS, CURATED_LIBRARY_SYNC } = require('../src/config/constants');
 
 /**
  * FRKB-API 管理员CLI工具
@@ -588,10 +592,12 @@ async function resetUserKey(userKeyOrShortId, options) {
       }
     )
   ]);
+  await UserCuratedArtistSnapshot.deleteOne({ userKey: targetUserKey });
   
   console.log('✅ 重置完成:');
   console.log(`   清除指纹数据: ${fpResult.deletedCount} 条`);
   console.log(`   清除元数据: ${metaResult.deletedCount} 条`);
+  console.log('   已清除精选艺人快照（精选库音频第一期不随此命令删除）');
   console.log(`   重置使用统计: ${keyResult.modifiedCount} 个userKey`);
   console.log('');
   console.log('🎉 userKey已恢复到刚创建时的状态');
@@ -872,6 +878,48 @@ program
     return setFingerprintLimit(userkey, limitWan);
   }));
 
+async function pushLocalBlobsToTarget(targetUrl, adminToken) {
+  const root = CURATED_LIBRARY_SYNC.BLOB_ROOT;
+  const stats = { uploaded: 0, failed: 0 };
+  async function walk(dir) {
+    let entries = [];
+    try {
+      entries = await fsp.readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name === 'tmp') continue;
+        await walk(full);
+        continue;
+      }
+      if (!/^[a-f0-9]{64}$/i.test(entry.name)) continue;
+      try {
+        const size = (await fsp.stat(full)).size;
+        const url =
+          `${targetUrl}/frkbapi/v1/admin/migration/blob/${entry.name.toLowerCase()}` +
+          `?adminToken=${encodeURIComponent(adminToken)}&size=${size}`;
+        const response = await fetch(url, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: fs.createReadStream(full)
+        });
+        if (!response.ok) {
+          stats.failed += 1;
+          continue;
+        }
+        stats.uploaded += 1;
+      } catch {
+        stats.failed += 1;
+      }
+    }
+  }
+  await walk(root);
+  return stats;
+}
+
 /**
  * 数据迁移命令
  * 从当前服务器导出数据并推送到目标服务器
@@ -952,6 +1000,13 @@ async function migrateData(options) {
     throw new Error(`导入失败: ${result.message}`);
   }
 
+  console.log('');
+  console.log('🎵 正在推送精选库音频（不走 JSON）...');
+  const blobStats = await pushLocalBlobsToTarget(targetUrl.replace(/\/$/, ''), adminToken);
+  console.log(
+    `   音频: ${blobStats.uploaded} 上传, ${blobStats.failed} 失败`
+  );
+
   // 3. 显示结果
   console.log('');
   console.log('✅ 迁移完成!');
@@ -973,6 +1028,8 @@ async function migrateData(options) {
     totalDocs,
     totalImported,
     totalSkipped,
+    blobsUploaded: blobStats.uploaded,
+    blobsFailed: blobStats.failed,
     operator: process.env.USER || 'admin'
   });
 }
@@ -980,7 +1037,7 @@ async function migrateData(options) {
 // 数据迁移命令
 program
   .command('migrate')
-  .description('将本地数据迁移到目标服务器（危险操作，建议先停止服务）')
+  .description('将本地 Mongo 数据与精选库音频文件迁移到目标服务器（只迁 JSON 不够，音频必须一起拷）')
   .requiredOption('-t, --target <url>', '目标服务器地址（如 http://192.168.1.100:3000）')
   .requiredOption('--admin-token <token>', '目标服务器的管理员令牌')
   .option('--force', '跳过确认直接执行')
@@ -988,6 +1045,8 @@ program
     if (!options.force) {
       console.log('⚠️  数据迁移将覆盖目标服务器上的数据!');
       console.log('   建议先停止目标服务器的服务以确保数据一致性');
+      console.log('   精选库音频不在 JSON 里：本命令会随后按 sha256 单独 PUT 文件。');
+      console.log('   若只跑旧版 Mongo export/import、不拷 blob 目录，新机歌单能看见但下不到音频。');
       console.log('');
       console.log('⏳ 5秒后开始迁移，按 Ctrl+C 取消...');
       await new Promise(resolve => setTimeout(resolve, 5000));

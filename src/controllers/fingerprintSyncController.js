@@ -565,7 +565,7 @@ class FingerprintSyncController {
         UserCuratedArtistSnapshot.findOne({ userKey: normalizedUserKey }).lean()
       ]);
 
-      // 执行重置：清空所有 mode 的指纹与元数据
+      // 执行重置：清空所有 mode 的指纹与元数据。第一期故意不删精选库音频。
       const [fpResult, metaResult, curatedArtistResult] = await Promise.all([
         UserFingerprintCollection.deleteMany({ userKey: normalizedUserKey }),
         UserCollectionMeta.deleteMany({ userKey: normalizedUserKey }),

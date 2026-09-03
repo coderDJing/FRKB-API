@@ -1,22 +1,26 @@
 const mongoose = require('mongoose');
 const fetch = require('node-fetch');
-const { COLLECTIONS, HTTP_STATUS } = require('../config/constants');
+const { COLLECTIONS, HTTP_STATUS, CURATED_LIBRARY_SYNC, FINGERPRINT_REGEX } = require('../config/constants');
 const logger = require('../utils/logger');
+const blobStore = require('../services/curatedLibraryBlobStore');
 
 // 需要迁移的集合列表（diff_sessions是临时数据，不迁移）
 const MIGRATABLE_COLLECTIONS = [
   COLLECTIONS.AUTH_KEYS,
   COLLECTIONS.USER_FINGERPRINTS,
   COLLECTIONS.USER_META,
-  COLLECTIONS.USER_CURATED_ARTIST_SNAPSHOTS
+  COLLECTIONS.USER_CURATED_ARTIST_SNAPSHOTS,
+  COLLECTIONS.USER_CURATED_LIBRARY_SNAPSHOTS,
+  COLLECTIONS.USER_CURATED_LIBRARY_BLOBS
 ];
 
-// 集合中文名映射
 const COLLECTION_LABELS = {
   [COLLECTIONS.AUTH_KEYS]: '授权用户密钥',
   [COLLECTIONS.USER_FINGERPRINTS]: '用户指纹',
   [COLLECTIONS.USER_META]: '用户元数据',
-  [COLLECTIONS.USER_CURATED_ARTIST_SNAPSHOTS]: '精选艺人快照'
+  [COLLECTIONS.USER_CURATED_ARTIST_SNAPSHOTS]: '精选艺人快照',
+  [COLLECTIONS.USER_CURATED_LIBRARY_SNAPSHOTS]: '精选库快照',
+  [COLLECTIONS.USER_CURATED_LIBRARY_BLOBS]: '精选库音频元数据'
 };
 
 /**
@@ -108,7 +112,8 @@ async function exportAll(req, res) {
     logger.admin('数据导出完成', {
       totalDocs,
       collections: MIGRATABLE_COLLECTIONS.length,
-      ip: req.ip
+      ip: req.ip,
+      blobNote: '精选库音频文件不进入 JSON，需通过 /admin/migration/blob/:sha256 或磁盘目录对账拷贝'
     });
 
     res.json({
@@ -248,13 +253,16 @@ async function importData(req, res) {
       ip: req.ip
     });
 
+    const blobSync = await copyLocalBlobDirectoryIfConfigured();
+
     res.json({
       success: true,
       message: '数据导入成功',
       summary: {
         totalImported,
         totalSkipped,
-        details: results
+        details: results,
+        blobs: blobSync
       }
     });
 
@@ -365,6 +373,11 @@ async function pullFromSource(req, res) {
       ip: req.ip
     });
 
+    const blobSync = await syncBlobsFromSource({
+      sourceUrl: sourceUrl.replace(/\/$/, ''),
+      adminToken
+    });
+
     res.json({
       success: true,
       message: '数据拉取导入成功',
@@ -372,7 +385,8 @@ async function pullFromSource(req, res) {
       summary: {
         totalImported,
         totalSkipped,
-        details: results
+        details: results,
+        blobs: blobSync
       }
     });
 
@@ -384,6 +398,133 @@ async function pullFromSource(req, res) {
       message: `数据拉取导入失败: ${error.message}`
     });
   }
+}
+
+/**
+ * 管理员按 sha256 读取精选库音频（不进 JSON export）
+ * GET /frkbapi/v1/admin/migration/blob/:sha256
+ */
+async function getBlob(req, res) {
+  try {
+    const sha256 = String(req.params.sha256 || '').trim().toLowerCase();
+    if (!FINGERPRINT_REGEX.test(sha256)) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: 'INVALID_BLOB_HASH',
+        message: 'sha256 无效'
+      });
+    }
+    if (!(await blobStore.blobExists(sha256))) {
+      return res.status(HTTP_STATUS.NOT_FOUND).json({
+        success: false,
+        error: 'BLOB_NOT_FOUND',
+        message: '音频文件不存在'
+      });
+    }
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${sha256}"`);
+    blobStore.createBlobReadStream(sha256).pipe(res);
+  } catch (error) {
+    logger.error('导出精选库音频失败', { error: error.message, sha256: req.params.sha256 });
+    if (!res.headersSent) {
+      res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+        success: false,
+        error: 'BLOB_EXPORT_FAILED',
+        message: `导出音频失败: ${error.message}`
+      });
+    }
+  }
+}
+
+/**
+ * 管理员写入精选库音频
+ * PUT /frkbapi/v1/admin/migration/blob/:sha256
+ */
+async function putBlob(req, res) {
+  try {
+    const sha256 = String(req.params.sha256 || '').trim().toLowerCase();
+    if (!FINGERPRINT_REGEX.test(sha256)) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: 'INVALID_BLOB_HASH',
+        message: 'sha256 无效'
+      });
+    }
+    const size = Number(req.query.size || req.headers['content-length'] || 0);
+    const readable = Buffer.isBuffer(req.body)
+      ? require('stream').Readable.from(req.body)
+      : req;
+    const result = await blobStore.writeBlobFromStream(sha256, size, readable);
+    res.json({
+      success: true,
+      sha256,
+      size: result.size,
+      alreadyReady: result.alreadyReady === true
+    });
+  } catch (error) {
+    logger.error('导入精选库音频失败', { error: error.message, sha256: req.params.sha256 });
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+      success: false,
+      error: 'BLOB_IMPORT_FAILED',
+      message: `导入音频失败: ${error.message}`
+    });
+  }
+}
+
+async function copyLocalBlobDirectoryIfConfigured() {
+  const sourceRoot = String(process.env.CURATED_LIBRARY_BLOB_MIGRATE_SOURCE || '').trim();
+  if (!sourceRoot) return { copied: 0, verified: 0, failed: 0, skipped: true };
+  return blobStore.copyBlobDirectory(sourceRoot, CURATED_LIBRARY_SYNC.BLOB_ROOT);
+}
+
+async function collectBlobHashesFromDb() {
+  const db = mongoose.connection.db;
+  const rows = await db
+    .collection(COLLECTIONS.USER_CURATED_LIBRARY_BLOBS)
+    .find({})
+    .project({ sha256: 1, size: 1 })
+    .toArray();
+  const unique = new Map();
+  for (const row of rows) {
+    const sha256 = String(row.sha256 || '').trim().toLowerCase();
+    if (!FINGERPRINT_REGEX.test(sha256)) continue;
+    unique.set(sha256, Number(row.size) || 0);
+  }
+  return unique;
+}
+
+async function syncBlobsFromSource({ sourceUrl, adminToken }) {
+  const directoryCopy = await copyLocalBlobDirectoryIfConfigured();
+  const unique = await collectBlobHashesFromDb();
+  let downloaded = 0;
+  let existed = 0;
+  let failed = 0;
+  for (const [sha256, size] of unique) {
+    if (await blobStore.blobExists(sha256)) {
+      existed += 1;
+      continue;
+    }
+    try {
+      const url = `${sourceUrl}/frkbapi/v1/admin/migration/blob/${sha256}?adminToken=${encodeURIComponent(adminToken)}`;
+      const response = await fetch(url);
+      if (!response.ok || !response.body) {
+        failed += 1;
+        continue;
+      }
+      await blobStore.writeBlobFromStream(sha256, size, response.body);
+      downloaded += 1;
+    } catch (error) {
+      logger.warn('拉取精选库音频失败', { sha256, error: error.message });
+      failed += 1;
+    }
+  }
+  return {
+    directoryCopy,
+    downloaded,
+    existed,
+    failed,
+    total: unique.size
+  };
 }
 
 /**
@@ -426,6 +567,8 @@ module.exports = {
   importData,
   pullFromSource,
   getMigrationStatus,
+  getBlob,
+  putBlob,
   MIGRATABLE_COLLECTIONS,
   COLLECTION_LABELS
 };

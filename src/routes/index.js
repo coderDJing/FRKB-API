@@ -1,6 +1,7 @@
 const express = require('express');
 const fingerprintRoutes = require('./fingerprint');
 const curatedArtistRoutes = require('./curatedArtist');
+const curatedLibraryRoutes = require('./curatedLibrary');
 const healthRoutes = require('./health');
 const logger = require('../utils/logger');
 const errorReportRoutes = require('./errorReport');
@@ -41,6 +42,14 @@ router.get('/', (req, res) => {
       curatedArtistSync: {
         sync: 'POST /frkbapi/v1/curated-artist-sync/sync - 精选艺人快照同步'
       },
+      curatedLibrarySync: {
+        status: 'POST /frkbapi/v1/curated-library-sync/status - 精选库同步状态',
+        pull: 'POST /frkbapi/v1/curated-library-sync/pull - 拉取精选库 revision diff',
+        push: 'POST /frkbapi/v1/curated-library-sync/push - 推送精选库变更',
+        blob: 'PUT/GET /frkbapi/v1/curated-library-sync/blob/:sha256 - 分片上传与断点下载',
+        events: 'GET /frkbapi/v1/curated-library-sync/events - 精选库修订 SSE',
+        reset: 'POST /frkbapi/v1/curated-library-sync/reset - 清空云端精选库快照与音频'
+      },
       
       // 健康检查接口
       health: {
@@ -58,10 +67,12 @@ router.get('/', (req, res) => {
       // 管理员接口（需要adminToken）
       admin: {
         migrationStatus: 'GET /frkbapi/v1/admin/migration/status - 查看迁移状态',
-        export: 'GET /frkbapi/v1/admin/migration/export - 导出所有数据',
+        export: 'GET /frkbapi/v1/admin/migration/export - 导出所有 Mongo 数据（不含精选库音频文件）',
         exportCollection: 'GET /frkbapi/v1/admin/migration/export/:collection - 导出单个集合',
         import: 'POST /frkbapi/v1/admin/migration/import - 导入数据',
-        pull: 'POST /frkbapi/v1/admin/migration/pull - 从源服务器拉取数据'
+        pull: 'POST /frkbapi/v1/admin/migration/pull - 从源服务器拉取数据并拷贝精选库音频',
+        getBlob: 'GET /frkbapi/v1/admin/migration/blob/:sha256 - 拉取单个精选库音频',
+        putBlob: 'PUT /frkbapi/v1/admin/migration/blob/:sha256 - 写入单个精选库音频'
       }
     },
     
@@ -97,6 +108,7 @@ router.use('/fingerprint-sync', fingerprintRoutes);
 
 // 精选艺人同步路由
 router.use('/curated-artist-sync', curatedArtistRoutes);
+router.use('/curated-library-sync', curatedLibraryRoutes);
 
 // 健康检查路由
 router.use('/health', healthRoutes);
@@ -124,6 +136,7 @@ router.use('*', (req, res) => {
     availableEndpoints: {
       fingerprintSync: '/frkbapi/v1/fingerprint-sync/*',
       curatedArtistSync: '/frkbapi/v1/curated-artist-sync/*',
+      curatedLibrarySync: '/frkbapi/v1/curated-library-sync/*',
       health: '/frkbapi/v1/health/*',
       errorReport: '/frkbapi/v1/error-report/*',
       admin: '/frkbapi/v1/admin/*'

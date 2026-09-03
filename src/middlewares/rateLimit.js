@@ -37,6 +37,12 @@ const basicRateLimit = rateLimit({
     if (req.path === '/health' || req.path === '/') {
       return true;
     }
+    if (String(req.originalUrl || req.url || '').includes('/curated-library-sync/blob/')) {
+      return true;
+    }
+    if (String(req.originalUrl || req.url || '').includes('/curated-library-sync/events')) {
+      return true;
+    }
     
     // 开发环境跳过限流，便于开发调试
     if (process.env.NODE_ENV === 'development') {

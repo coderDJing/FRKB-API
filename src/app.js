@@ -29,7 +29,19 @@ app.use(helmet({
 
 // 压缩中间件
 if (process.env.ENABLE_COMPRESSION !== 'false') {
-  app.use(compression());
+  app.use(
+    compression({
+      filter: (req, res) => {
+        if (String(req.originalUrl || req.url || '').includes('/curated-library-sync/blob/')) {
+          return false;
+        }
+        if (String(req.originalUrl || req.url || '').includes('/curated-library-sync/events')) {
+          return false;
+        }
+        return compression.filter(req, res);
+      }
+    })
+  );
 }
 
 // 基础中间件
@@ -66,7 +78,7 @@ app.get('/health', HealthController.basicHealth);
 // 根路径
 app.get('/', (req, res) => {
   res.json({
-    message: '🚀 FRKB API 服务正在运行（指纹 + 精选艺人同步）',
+    message: '🚀 FRKB API 服务正在运行（指纹 + 精选艺人 + 精选库同步）',
     version: '1.0.0',
     environment: process.env.NODE_ENV,
     endpoints: {
