@@ -455,21 +455,37 @@ async function assertBlobReadable(userKey, sha256) {
 
 async function deleteUserCuratedLibrary(userKey) {
   const blobs = await UserCuratedLibraryBlob.find({ userKey }).lean();
-  const snapshot = await UserCuratedLibrarySnapshot.findOne({ userKey }).lean();
   await UserCuratedLibraryBlob.deleteMany({ userKey });
-  await UserCuratedLibrarySnapshot.deleteOne({ userKey });
   for (const row of blobs) {
     const still = await UserCuratedLibraryBlob.exists({ sha256: row.sha256, ready: true });
     await blobStore.unlinkBlobIfOrphan(row.sha256, !!still);
   }
+  const now = new Date();
+  const empty = {
+    protocolVersion: PROTOCOL_VERSION,
+    revision: 0,
+    snapshotReady: true,
+    firstSnapshotSessionId: null,
+    firstSnapshotLockUntil: null,
+    nodes: [],
+    files: [],
+    tombstones: [],
+    lastSyncAt: now,
+    lastUpdateAt: now
+  };
+  await UserCuratedLibrarySnapshot.findOneAndUpdate(
+    { userKey },
+    { $set: empty },
+    { upsert: true, new: true }
+  );
   curatedLibraryEvents.notifyCuratedLibraryRevision(userKey, {
     revision: 0,
-    snapshotReady: false
+    snapshotReady: true
   });
   return {
     blobCount: blobs.length,
-    snapshotDeleted: !!snapshot,
-    fileCount: Array.isArray(snapshot?.files) ? snapshot.files.length : 0
+    snapshotDeleted: true,
+    fileCount: 0
   };
 }
 
