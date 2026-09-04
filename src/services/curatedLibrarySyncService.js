@@ -142,15 +142,13 @@ function applyOp(snapshot, op, nextRevision) {
       (item) => item.kind === 'node' && item.id === node.uuid
     );
     if (tombstoned) return;
+    // 同一 userKey 跨时区：客户端 updatedAtMs 是 Unix 毫秒，时区不影响。
+    // 但设备时钟不准时，不能拿客户端时间否决已经抢到的 revision。
     node.revision = nextRevision;
-    snapshot.tombstones = snapshot.tombstones.filter(
-      (item) => !(item.kind === 'node' && item.id === node.uuid)
-    );
+    node.updatedAtMs = now;
     const index = snapshot.nodes.findIndex((item) => item.uuid === node.uuid);
-    if (index < 0 || (snapshot.nodes[index].updatedAtMs || 0) <= node.updatedAtMs) {
-      if (index < 0) snapshot.nodes.push(node);
-      else snapshot.nodes[index] = node;
-    }
+    if (index < 0) snapshot.nodes.push(node);
+    else snapshot.nodes[index] = node;
     return;
   }
   if (type === 'deleteNode') {
@@ -164,7 +162,7 @@ function applyOp(snapshot, op, nextRevision) {
       kind: 'node',
       id: uuid,
       revision: nextRevision,
-      deletedAtMs: Number(op.updatedAtMs) || now
+      deletedAtMs: now
     });
     return;
   }
@@ -176,14 +174,13 @@ function applyOp(snapshot, op, nextRevision) {
     );
     if (type === 'upsertFile' && tombstoned) return;
     file.revision = nextRevision;
+    file.updatedAtMs = now;
     snapshot.tombstones = snapshot.tombstones.filter(
       (item) => !(item.kind === 'file' && item.id === file.fileId)
     );
     const index = snapshot.files.findIndex((item) => item.fileId === file.fileId);
-    if (index < 0 || (snapshot.files[index].updatedAtMs || 0) <= file.updatedAtMs) {
-      if (index < 0) snapshot.files.push(file);
-      else snapshot.files[index] = file;
-    }
+    if (index < 0) snapshot.files.push(file);
+    else snapshot.files[index] = file;
     return;
   }
   if (type === 'deleteFile') {
@@ -197,7 +194,7 @@ function applyOp(snapshot, op, nextRevision) {
       kind: 'file',
       id: fileId,
       revision: nextRevision,
-      deletedAtMs: Number(op.updatedAtMs) || now
+      deletedAtMs: now
     });
   }
 }
