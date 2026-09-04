@@ -138,6 +138,10 @@ function applyOp(snapshot, op, nextRevision) {
   if (type === 'upsertNode') {
     const node = sanitizeNode(op.node);
     if (!node) return;
+    const tombstoned = snapshot.tombstones.some(
+      (item) => item.kind === 'node' && item.id === node.uuid
+    );
+    if (tombstoned) return;
     node.revision = nextRevision;
     snapshot.tombstones = snapshot.tombstones.filter(
       (item) => !(item.kind === 'node' && item.id === node.uuid)
@@ -167,6 +171,10 @@ function applyOp(snapshot, op, nextRevision) {
   if (type === 'upsertFile' || type === 'undeleteFile') {
     const file = sanitizeFile(op.file);
     if (!file) return;
+    const tombstoned = snapshot.tombstones.some(
+      (item) => item.kind === 'file' && item.id === file.fileId
+    );
+    if (type === 'upsertFile' && tombstoned) return;
     file.revision = nextRevision;
     snapshot.tombstones = snapshot.tombstones.filter(
       (item) => !(item.kind === 'file' && item.id === file.fileId)
