@@ -69,6 +69,17 @@ async function blobExists(sha256) {
   }
 }
 
+async function ensureEmptyBlob(sha256) {
+  const hex = String(sha256 || '').trim().toLowerCase();
+  if (hex !== crypto.createHash('sha256').update('').digest('hex')) {
+    throw Object.assign(new Error('CURATED_LIBRARY_BLOB_HASH_MISMATCH'), { code: 'HASH_MISMATCH' });
+  }
+  await ensureBlobRoot();
+  const dest = blobPathFor(hex);
+  if (!(await blobExists(hex))) await fs.writeFile(dest, Buffer.alloc(0));
+  return { path: dest, size: 0 };
+}
+
 async function statBlob(sha256) {
   const stat = await fs.stat(blobPathFor(sha256));
   return { size: stat.size, path: blobPathFor(sha256) };
@@ -271,6 +282,7 @@ module.exports = {
   blobPathFor,
   ensureBlobRoot,
   blobExists,
+  ensureEmptyBlob,
   statBlob,
   getUploadedBytes,
   appendBlobChunk,

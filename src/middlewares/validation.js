@@ -494,7 +494,7 @@ const validateFingerprintArrayContent = (req, res, next) => {
  */
 const validateRequestSize = (req, res, next) => {
   const contentLength = parseInt(req.headers['content-length']) || 0;
-  const maxSize = 10 * 1024 * 1024; // 10MB
+  const maxSize = Number(process.env.CURATED_LIBRARY_REQUEST_MAX_BYTES) || 100 * 1024 * 1024;
   
   if (contentLength > maxSize) {
     logger.warn('请求体过大', {

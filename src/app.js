@@ -46,12 +46,12 @@ if (process.env.ENABLE_COMPRESSION !== 'false') {
 
 // 基础中间件
 app.use(express.json({ 
-  limit: process.env.REQUEST_SIZE_LIMIT || '10mb',
+  limit: process.env.REQUEST_SIZE_LIMIT || '100mb',
   strict: true
 }));
 app.use(express.urlencoded({ 
   extended: true, 
-  limit: process.env.REQUEST_SIZE_LIMIT || '10mb'
+  limit: process.env.REQUEST_SIZE_LIMIT || '100mb'
 }));
 
 // 全局请求限制
