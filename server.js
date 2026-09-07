@@ -1,5 +1,6 @@
 const app = require('./src/app');
 const { connectDB, closeDB } = require('./src/config/database');
+const { API_PREFIX } = require('./src/config/constants');
 
 const PORT = process.env.PORT || 3000;
 
@@ -8,7 +9,7 @@ const PORT = process.env.PORT || 3000;
  */
 const startServer = async () => {
   try {
-    console.log('🚀 正在启动 FRKB API 服务器...');
+    console.log('🚀 正在启动 Track Studio API 服务器...');
     
     // 1. 连接数据库
     console.log('📡 正在连接数据库...');
@@ -20,7 +21,7 @@ const startServer = async () => {
       console.log(`📍 本地地址: http://localhost:${PORT}`);
       console.log(`🌍 环境: ${process.env.NODE_ENV || 'development'}`);
       console.log(`🔗 健康检查: http://localhost:${PORT}/health`);
-      console.log(`📚 API前缀: ${process.env.API_PREFIX || '/frkbapi/v1'}`);
+      console.log(`📚 API前缀: ${API_PREFIX}`);
       console.log('─'.repeat(50));
     });
 

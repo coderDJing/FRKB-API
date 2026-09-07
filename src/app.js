@@ -4,8 +4,9 @@ const helmet = require('helmet');
 const compression = require('compression');
 require('dotenv').config();
 
+const { API_PREFIX } = require('./config/constants');
 const app = express();
-const apiPrefix = process.env.API_PREFIX || '/frkbapi/v1';
+const apiPrefix = API_PREFIX;
 const curatedLibraryRequestMaxBytes =
   Number(process.env.CURATED_LIBRARY_REQUEST_MAX_BYTES) || 100 * 1024 * 1024;
 
@@ -86,12 +87,12 @@ app.get('/health', HealthController.basicHealth);
 // 根路径
 app.get('/', (req, res) => {
   res.json({
-    message: '🚀 FRKB API 服务正在运行（指纹 + 精选艺人 + 精选库同步）',
+    message: '🚀 Track Studio API 服务正在运行（指纹 + 精选艺人 + 精选库同步）',
     version: '1.0.0',
     environment: process.env.NODE_ENV,
     endpoints: {
       health: '/health',
-      api: process.env.API_PREFIX || '/frkbapi/v1'
+      api: apiPrefix
     },
     docs: '查看README.md了解更多API文档'
   });

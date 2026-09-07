@@ -19,17 +19,17 @@ const UserKeyUtils = require('../src/utils/userKeyUtils');
 const HashUtils = require('../src/utils/hashUtils');
 const logger = require('../src/utils/logger');
 const UserCuratedArtistSnapshot = require('../src/models/UserCuratedArtistSnapshot');
-const { LIMITS, CURATED_LIBRARY_SYNC } = require('../src/config/constants');
+const { LIMITS, CURATED_LIBRARY_SYNC, API_PREFIX } = require('../src/config/constants');
 
 /**
- * FRKB-API 管理员CLI工具
+ * Track Studio API 管理员 CLI 工具
  * 提供userKey管理、系统状态查询等功能
  */
 
 // 配置程序信息
 program
   .name('frkb-admin')
-  .description('FRKB-API 管理员命令行工具')
+  .description('Track Studio API 管理员命令行工具')
   .version('1.0.0');
 
 /**
@@ -899,7 +899,7 @@ async function pushLocalBlobsToTarget(targetUrl, adminToken) {
       try {
         const size = (await fsp.stat(full)).size;
         const url =
-          `${targetUrl}/frkbapi/v1/admin/migration/blob/${entry.name.toLowerCase()}` +
+          `${String(targetUrl).replace(/\/$/, '')}${API_PREFIX}/admin/migration/blob/${entry.name.toLowerCase()}` +
           `?adminToken=${encodeURIComponent(adminToken)}&size=${size}`;
         const response = await fetch(url, {
           method: 'PUT',
@@ -975,7 +975,7 @@ async function migrateData(options) {
   // 2. 推送到目标服务器
   console.log('📤 正在推送到目标服务器...');
 
-  const importUrl = `${targetUrl.replace(/\/$/, '')}/frkbapi/v1/admin/migration/import?adminToken=${encodeURIComponent(adminToken)}`;
+  const importUrl = `${targetUrl.replace(/\/$/, '')}${API_PREFIX}/admin/migration/import?adminToken=${encodeURIComponent(adminToken)}`;
 
   const response = await fetch(importUrl, {
     method: 'POST',
@@ -1061,7 +1061,7 @@ program
   .description('显示使用示例')
   .action(() => {
     console.log(`
-📚 FRKB-API 管理工具使用示例:
+📚 Track Studio API 管理工具使用示例:
 
 🔑 创建userKey:
    node cli/admin.js create --desc "张三的客户端"

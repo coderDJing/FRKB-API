@@ -1,6 +1,6 @@
 const mongoose = require('mongoose');
 const fetch = require('node-fetch');
-const { COLLECTIONS, HTTP_STATUS, CURATED_LIBRARY_SYNC, FINGERPRINT_REGEX } = require('../config/constants');
+const { COLLECTIONS, HTTP_STATUS, CURATED_LIBRARY_SYNC, FINGERPRINT_REGEX, API_PREFIX } = require('../config/constants');
 const logger = require('../utils/logger');
 const blobStore = require('../services/curatedLibraryBlobStore');
 
@@ -302,7 +302,7 @@ async function pullFromSource(req, res) {
     }
 
     // 构建导出URL
-    const exportUrl = `${sourceUrl.replace(/\/$/, '')}/frkbapi/v1/admin/migration/export?adminToken=${encodeURIComponent(adminToken)}`;
+    const exportUrl = `${sourceUrl.replace(/\/$/, '')}${API_PREFIX}/admin/migration/export?adminToken=${encodeURIComponent(adminToken)}`;
 
     logger.admin('开始从源服务器拉取数据', { sourceUrl, ip: req.ip });
 
@@ -505,7 +505,7 @@ async function syncBlobsFromSource({ sourceUrl, adminToken }) {
       continue;
     }
     try {
-      const url = `${sourceUrl}/frkbapi/v1/admin/migration/blob/${sha256}?adminToken=${encodeURIComponent(adminToken)}`;
+      const url = `${String(sourceUrl).replace(/\/$/, '')}${API_PREFIX}/admin/migration/blob/${sha256}?adminToken=${encodeURIComponent(adminToken)}`;
       const response = await fetch(url);
       if (!response.ok || !response.body) {
         failed += 1;

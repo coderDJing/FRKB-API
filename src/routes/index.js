@@ -6,8 +6,13 @@ const healthRoutes = require('./health');
 const logger = require('../utils/logger');
 const errorReportRoutes = require('./errorReport');
 const adminRoutes = require('./admin');
+const { API_PREFIX } = require('../config/constants');
 
 const router = express.Router();
+
+function describe(method, path, text) {
+  return `${method} ${API_PREFIX}${path} - ${text}`;
+}
 
 /**
  * API路由入口
@@ -18,7 +23,7 @@ const router = express.Router();
 router.get('/', (req, res) => {
   res.json({
     success: true,
-    message: '🚀 FRKB API v1 - 指纹与精选艺人同步系统',
+    message: '🚀 Track Studio API v1 - 指纹、精选艺人与精选库同步',
     version: '1.0.0',
     environment: process.env.NODE_ENV,
     timestamp: new Date().toISOString(),
@@ -26,53 +31,53 @@ router.get('/', (req, res) => {
     endpoints: {
       // 指纹同步相关接口
       sync: {
-        check: 'POST /frkbapi/v1/fingerprint-sync/check - 同步预检查',
-        validateUserKey: 'POST /frkbapi/v1/fingerprint-sync/validate-user-key - 仅校验 userKey 是否有效',
-        bidirectionalDiff: 'POST /frkbapi/v1/fingerprint-sync/bidirectional-diff - 双向差异检测',
-        add: 'POST /frkbapi/v1/fingerprint-sync/add - 批量添加指纹',
-        pullDiffPage: 'POST /frkbapi/v1/fingerprint-sync/pull-diff-page - 分页拉取差异数据',
-        analyzeDiff: 'POST /frkbapi/v1/fingerprint-sync/analyze-diff - 完整差异分析',
-        reset: 'POST /frkbapi/v1/fingerprint-sync/reset - 重置指定userKey的所有数据（不重置使用统计）',
-        status: 'GET /frkbapi/v1/fingerprint-sync/status?userKey=xxx - 获取同步状态',
-        serviceStats: 'GET /frkbapi/v1/fingerprint-sync/service-stats - 服务统计',
-        clearCache: 'DELETE /frkbapi/v1/fingerprint-sync/cache/:userKey - 清除用户缓存',
-        forceUnlock: 'DELETE /frkbapi/v1/fingerprint-sync/lock/:userKey - 强制释放同步锁'
+        check: describe('POST', '/fingerprint-sync/check', '同步预检查'),
+        validateUserKey: describe('POST', '/fingerprint-sync/validate-user-key', '仅校验 userKey 是否有效'),
+        bidirectionalDiff: describe('POST', '/fingerprint-sync/bidirectional-diff', '双向差异检测'),
+        add: describe('POST', '/fingerprint-sync/add', '批量添加指纹'),
+        pullDiffPage: describe('POST', '/fingerprint-sync/pull-diff-page', '分页拉取差异数据'),
+        analyzeDiff: describe('POST', '/fingerprint-sync/analyze-diff', '完整差异分析'),
+        reset: describe('POST', '/fingerprint-sync/reset', '重置指定userKey的所有数据（不重置使用统计）'),
+        status: describe('GET', '/fingerprint-sync/status?userKey=xxx', '获取同步状态'),
+        serviceStats: describe('GET', '/fingerprint-sync/service-stats', '服务统计'),
+        clearCache: describe('DELETE', '/fingerprint-sync/cache/:userKey', '清除用户缓存'),
+        forceUnlock: describe('DELETE', '/fingerprint-sync/lock/:userKey', '强制释放同步锁')
       },
 
       curatedArtistSync: {
-        sync: 'POST /frkbapi/v1/curated-artist-sync/sync - 精选艺人快照同步'
+        sync: describe('POST', '/curated-artist-sync/sync', '精选艺人快照同步')
       },
       curatedLibrarySync: {
-        status: 'POST /frkbapi/v1/curated-library-sync/status - 精选库同步状态',
-        pull: 'POST /frkbapi/v1/curated-library-sync/pull - 拉取精选库 revision diff',
-        push: 'POST /frkbapi/v1/curated-library-sync/push - 推送精选库变更',
-        blob: 'PUT/GET /frkbapi/v1/curated-library-sync/blob/:sha256 - 分片上传与断点下载',
-        events: 'GET /frkbapi/v1/curated-library-sync/events - 精选库修订 SSE',
-        reset: 'POST /frkbapi/v1/curated-library-sync/reset - 清空云端精选库快照与音频'
+        status: describe('POST', '/curated-library-sync/status', '精选库同步状态'),
+        pull: describe('POST', '/curated-library-sync/pull', '拉取精选库 revision diff'),
+        push: describe('POST', '/curated-library-sync/push', '推送精选库变更'),
+        blob: describe('PUT/GET', '/curated-library-sync/blob/:sha256', '分片上传与断点下载'),
+        events: describe('GET', '/curated-library-sync/events', '精选库修订 SSE'),
+        reset: describe('POST', '/curated-library-sync/reset', '清空云端精选库快照与音频')
       },
       
       // 健康检查接口
       health: {
         basic: 'GET /health - 基础健康检查',
-        detailed: 'GET /frkbapi/v1/health/detailed - 详细健康检查',
-        stats: 'GET /frkbapi/v1/health/stats - 系统统计',
-        diagnose: 'GET /frkbapi/v1/health/diagnose - 系统诊断'
+        detailed: describe('GET', '/health/detailed', '详细健康检查'),
+        stats: describe('GET', '/health/stats', '系统统计'),
+        diagnose: describe('GET', '/health/diagnose', '系统诊断')
       },
 
       // 错误日志上报
       errorReport: {
-        upload: 'POST /frkbapi/v1/error-report/upload - 错误日志上报（无需userKey，需API Key，严格限流）'
+        upload: describe('POST', '/error-report/upload', '错误日志上报（无需userKey，需API Key，严格限流）')
       },
 
       // 管理员接口（需要adminToken）
       admin: {
-        migrationStatus: 'GET /frkbapi/v1/admin/migration/status - 查看迁移状态',
-        export: 'GET /frkbapi/v1/admin/migration/export - 导出所有 Mongo 数据（不含精选库音频文件）',
-        exportCollection: 'GET /frkbapi/v1/admin/migration/export/:collection - 导出单个集合',
-        import: 'POST /frkbapi/v1/admin/migration/import - 导入数据',
-        pull: 'POST /frkbapi/v1/admin/migration/pull - 从源服务器拉取数据并拷贝精选库音频',
-        getBlob: 'GET /frkbapi/v1/admin/migration/blob/:sha256 - 拉取单个精选库音频',
-        putBlob: 'PUT /frkbapi/v1/admin/migration/blob/:sha256 - 写入单个精选库音频'
+        migrationStatus: describe('GET', '/admin/migration/status', '查看迁移状态'),
+        export: describe('GET', '/admin/migration/export', '导出所有 Mongo 数据（不含精选库音频文件）'),
+        exportCollection: describe('GET', '/admin/migration/export/:collection', '导出单个集合'),
+        import: describe('POST', '/admin/migration/import', '导入数据'),
+        pull: describe('POST', '/admin/migration/pull', '从源服务器拉取数据并拷贝精选库音频'),
+        getBlob: describe('GET', '/admin/migration/blob/:sha256', '拉取单个精选库音频'),
+        putBlob: describe('PUT', '/admin/migration/blob/:sha256', '写入单个精选库音频')
       }
     },
     
@@ -119,7 +124,7 @@ router.use('/error-report', errorReportRoutes);
 // 管理员路由（需要 adminToken）
 router.use('/admin', adminRoutes);
 
-// 404处理 - 针对/frkbapi/v1路径下的未匹配路由
+// 404处理 - 针对当前 API 前缀下的未匹配路由
 router.use('*', (req, res) => {
   logger.warn('API路由未找到', {
     method: req.method,
@@ -134,12 +139,12 @@ router.use('*', (req, res) => {
     message: `API路由不存在: ${req.method} ${req.originalUrl}`,
     suggestion: '请检查请求路径和方法是否正确',
     availableEndpoints: {
-      fingerprintSync: '/frkbapi/v1/fingerprint-sync/*',
-      curatedArtistSync: '/frkbapi/v1/curated-artist-sync/*',
-      curatedLibrarySync: '/frkbapi/v1/curated-library-sync/*',
-      health: '/frkbapi/v1/health/*',
-      errorReport: '/frkbapi/v1/error-report/*',
-      admin: '/frkbapi/v1/admin/*'
+      fingerprintSync: `${API_PREFIX}/fingerprint-sync/*`,
+      curatedArtistSync: `${API_PREFIX}/curated-artist-sync/*`,
+      curatedLibrarySync: `${API_PREFIX}/curated-library-sync/*`,
+      health: `${API_PREFIX}/health/*`,
+      errorReport: `${API_PREFIX}/error-report/*`,
+      admin: `${API_PREFIX}/admin/*`
     },
     timestamp: new Date().toISOString()
   });

@@ -115,6 +115,9 @@ module.exports = {
     )
   },
 
+  // API 路由前缀（历史标识 /frkbapi/v1，默认值不要为了改名而修改）
+  API_PREFIX: process.env.API_PREFIX || '/frkbapi/v1',
+
   CURATED_LIBRARY_SYNC: {
     PROTOCOL_VERSION: 1,
     BLOB_ROOT: process.env.CURATED_LIBRARY_BLOB_ROOT || require('path').join(process.cwd(), 'data', 'frkb-blobs'),

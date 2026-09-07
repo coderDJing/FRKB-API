@@ -2,7 +2,7 @@
 
 ## 目录
 ```
-FRKB-API/
+Track-Studio-API/
 ├── server.js                # 进程入口
 ├── src/
 │   ├── app.js               # Express 应用与全局中间件
