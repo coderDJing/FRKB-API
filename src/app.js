@@ -5,6 +5,9 @@ const compression = require('compression');
 require('dotenv').config();
 
 const app = express();
+const apiPrefix = process.env.API_PREFIX || '/frkbapi/v1';
+const curatedLibraryRequestMaxBytes =
+  Number(process.env.CURATED_LIBRARY_REQUEST_MAX_BYTES) || 100 * 1024 * 1024;
 
 // 导入中间件
 const { basicRateLimit, rateLimitMonitor } = require('./middlewares/rateLimit');
@@ -45,6 +48,11 @@ if (process.env.ENABLE_COMPRESSION !== 'false') {
 }
 
 // 基础中间件
+// 精选库快照可能明显大于通用接口的 JSON 限制；先在专用路径解析，后续通用解析器会跳过已读流。
+app.use(
+  `${apiPrefix}/curated-library-sync`,
+  express.json({ limit: curatedLibraryRequestMaxBytes, strict: true })
+);
 app.use(express.json({ 
   limit: process.env.REQUEST_SIZE_LIMIT || '100mb',
   strict: true
@@ -90,8 +98,6 @@ app.get('/', (req, res) => {
 });
 
 // API路由前缀
-const apiPrefix = process.env.API_PREFIX || '/frkbapi/v1';
-
 // API路由
 const apiRoutes = require('./routes');
 app.use(apiPrefix, apiRoutes);

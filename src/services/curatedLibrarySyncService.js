@@ -306,7 +306,7 @@ async function assertSnapshotBlobsReady(userKey, files) {
       sha256: file.sha256,
       ready: true
     }).lean();
-    if (!ref || !(await blobStore.verifyBlob(file.sha256))) {
+    if (!ref || !(await blobStore.blobExists(file.sha256))) {
       throw new CuratedLibrarySyncError(
         ERROR_CODES.CURATED_LIBRARY_BLOB_NOT_FOUND,
         `文件 Blob 不存在: ${file.fileId}`,
@@ -433,7 +433,7 @@ function applyOp(snapshot, op, nextRevision) {
 
 async function getStatus(userKey) {
   const snapshot = await UserCuratedLibrarySnapshot.getOrCreate(userKey);
-  const blobBytes = await sumReadyBlobBytes(userKey);
+  const blobBytes = await sumReservedBlobBytes(userKey);
   const lockUntil = snapshot.firstSnapshotLockUntil ? new Date(snapshot.firstSnapshotLockUntil) : null;
   return {
     protocolVersion: PROTOCOL_VERSION,
@@ -514,18 +514,27 @@ async function commitSnapshot(userKey, payload) {
     stampRevision({ nodes, files }, nextRevision)
     const newFileIds = new Set(files.map((item) => item.fileId))
     const newNodeIds = new Set(nodes.map((item) => item.uuid))
-    const tombstones = []
+    const tombstoneByKey = new Map(
+      normalizeTombstones(snapshot.tombstones || []).map((item) => [`${item.kind}:${item.id}`, item])
+    )
+    for (const id of newFileIds) tombstoneByKey.delete(`file:${id}`)
+    for (const id of newNodeIds) tombstoneByKey.delete(`node:${id}`)
     const deletedAtMs = Date.now()
     for (const file of snapshot.files || []) {
       if (!newFileIds.has(file.fileId)) {
-        tombstones.push({ kind: 'file', id: file.fileId, revision: nextRevision, deletedAtMs })
+        tombstoneByKey.set(`file:${file.fileId}`, {
+          kind: 'file', id: file.fileId, revision: nextRevision, deletedAtMs
+        })
       }
     }
     for (const node of snapshot.nodes || []) {
       if (!newNodeIds.has(node.uuid)) {
-        tombstones.push({ kind: 'node', id: node.uuid, revision: nextRevision, deletedAtMs })
+        tombstoneByKey.set(`node:${node.uuid}`, {
+          kind: 'node', id: node.uuid, revision: nextRevision, deletedAtMs
+        })
       }
     }
+    const tombstones = [...tombstoneByKey.values()]
     const saved = await UserCuratedLibrarySnapshot.findOneAndUpdate(
       { userKey, snapshotReady: true, revision: snapshot.revision },
       {
@@ -677,7 +686,7 @@ async function pushOps(userKey, payload) {
   const next = {
     nodes: normalizeEntityList(snapshot.nodes || [], sanitizeNode, 'stored nodes'),
     files: normalizeEntityList(snapshot.files || [], sanitizeFile, 'stored files'),
-    tombstones: normalizeTombstones(snapshot.tombstones),
+    tombstones: normalizeTombstones(snapshot.tombstones || []),
     revision: snapshot.revision
   };
   normalizeLegacyRootParents(next.nodes, next.files);
@@ -859,11 +868,6 @@ async function assertBlobReadable(userKey, sha256) {
 
 async function deleteUserCuratedLibrary(userKey) {
   const blobs = await UserCuratedLibraryBlob.find({ userKey }).lean();
-  await UserCuratedLibraryBlob.deleteMany({ userKey });
-  for (const row of blobs) {
-    const still = await UserCuratedLibraryBlob.exists({ sha256: row.sha256, ready: true });
-    await blobStore.unlinkBlobIfOrphan(row.sha256, !!still);
-  }
   const now = new Date();
   const empty = {
     protocolVersion: PROTOCOL_VERSION,
@@ -882,6 +886,12 @@ async function deleteUserCuratedLibrary(userKey) {
     { $set: empty },
     { upsert: true, new: true }
   );
+  // 先提交权威空快照，再清理引用。清理失败最多泄漏磁盘，不会留下引用已删除 Blob 的旧快照。
+  await UserCuratedLibraryBlob.deleteMany({ userKey });
+  for (const row of blobs) {
+    const still = await UserCuratedLibraryBlob.exists({ sha256: row.sha256, ready: true });
+    await blobStore.unlinkBlobIfOrphan(row.sha256, !!still);
+  }
   curatedLibraryEvents.notifyCuratedLibraryRevision(userKey, {
     revision: 0,
     snapshotReady: true
