@@ -742,11 +742,12 @@ async function beginBlob(userKey, sha256, size) {
       400
     );
   }
+  const blobAlreadyExists = await blobStore.blobExists(hex);
   let uploadedBytes = await blobStore.getUploadedBytes(hex);
-  if (uploadedBytes > numericSize) {
+  if (!blobAlreadyExists && uploadedBytes > numericSize) {
     await blobStore.unlinkBlobIfOrphan(hex, false);
     uploadedBytes = 0;
-  } else if (uploadedBytes === numericSize && !(await blobStore.blobExists(hex))) {
+  } else if (!blobAlreadyExists && uploadedBytes === numericSize) {
     try {
       await blobStore.promotePartFile(hex, numericSize);
       await upsertBlobRef(userKey, hex, numericSize, true);
