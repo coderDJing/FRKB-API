@@ -98,7 +98,7 @@ const apiKeyAuth = (req, res, next) => {
  */
 const userKeyAuth = async (req, res, next) => {
   try {
-    const userKey = req.body.userKey || req.query.userKey;
+    const userKey = req.body?.userKey || req.query.userKey;
     
     if (!userKey) {
       return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -173,7 +173,7 @@ const userKeyAuth = async (req, res, next) => {
     logger.error('userKey验证异常', {
       error: error.message,
       stack: error.stack,
-      userKey: req.body.userKey ? UserKeyUtils.toShortId(req.body.userKey) : 'unknown',
+      userKey: req.body?.userKey ? UserKeyUtils.toShortId(req.body.userKey) : 'unknown',
       url: req.originalUrl,
       ip: req.ip
     });
@@ -206,7 +206,7 @@ const queryAuth = [apiKeyAuth, userKeyAuth];
  * 可选的userKey验证中间件（如果提供了userKey则验证，否则跳过）
  */
 const optionalUserKeyAuth = async (req, res, next) => {
-  const userKey = req.body.userKey || req.query.userKey;
+  const userKey = req.body?.userKey || req.query.userKey;
   
   if (!userKey) {
     // 没有提供userKey，跳过验证

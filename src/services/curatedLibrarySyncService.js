@@ -12,6 +12,25 @@ const {
 } = require('../config/constants');
 
 const PROTOCOL_VERSION = CURATED_LIBRARY_SYNC.PROTOCOL_VERSION;
+const ROOT_PARENT_UUID = '00000000-0000-4000-8000-000000000000';
+const userMutationLocks = new Map();
+
+async function withUserMutationLock(userKey, operation) {
+  const key = String(userKey || '').trim();
+  const previous = userMutationLocks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  userMutationLocks.set(key, current);
+  await previous;
+  try {
+    return await operation();
+  } finally {
+    release();
+    if (userMutationLocks.get(key) === current) userMutationLocks.delete(key);
+  }
+}
 
 const isUuid = (value) => USER_KEY_REGEX.test(String(value || '').trim());
 const isSha = (value) => FINGERPRINT_REGEX.test(String(value || '').trim());
@@ -39,11 +58,17 @@ function toOptionalPositiveInt(value) {
 }
 
 function sanitizeNode(raw) {
-  const uuid = String(raw?.uuid || '').trim();
-  const parentUuid = String(raw?.parentUuid || '').trim();
+  const uuid = String(raw?.uuid || '').trim().toLowerCase();
+  const parentUuid = String(raw?.parentUuid || '').trim().toLowerCase();
   const name = String(raw?.name || '').trim();
   const nodeType = raw?.nodeType === 'songList' ? 'songList' : raw?.nodeType === 'dir' ? 'dir' : '';
-  if (!isUuid(uuid) || !isUuid(parentUuid) || !isSafeLeafName(name) || !nodeType) return null;
+  if (
+    !isUuid(uuid) ||
+    uuid === ROOT_PARENT_UUID ||
+    !isUuid(parentUuid) ||
+    !isSafeLeafName(name) ||
+    !nodeType
+  ) return null;
   const revision = Number(raw.revision);
   const updatedAtMs = toOptionalPositiveInt(raw.updatedAtMs);
   return {
@@ -58,12 +83,19 @@ function sanitizeNode(raw) {
 }
 
 function sanitizeFile(raw) {
-  const fileId = String(raw?.fileId || '').trim();
-  const parentUuid = String(raw?.parentUuid || '').trim();
+  const fileId = String(raw?.fileId || '').trim().toLowerCase();
+  const parentUuid = String(raw?.parentUuid || '').trim().toLowerCase();
   const fileName = String(raw?.fileName || '').trim();
   const sha256 = String(raw?.sha256 || '').trim().toLowerCase();
   const size = Number(raw?.size);
-  if (!isUuid(fileId) || !isUuid(parentUuid) || !isSafeLeafName(fileName) || !isSha(sha256) || !Number.isFinite(size) || size < 0) {
+  if (
+    !isUuid(fileId) ||
+    !isUuid(parentUuid) ||
+    !isSafeLeafName(fileName) ||
+    !isSha(sha256) ||
+    !Number.isSafeInteger(size) ||
+    size < 0
+  ) {
     return null;
   }
   const revision = Number(raw.revision);
@@ -116,7 +148,12 @@ class CuratedLibrarySyncError extends Error {
 }
 
 function normalizeEntityList(raw, sanitizer, label) {
-  if (!Array.isArray(raw)) return [];
+  if (!Array.isArray(raw)) {
+    throw new CuratedLibrarySyncError(
+      ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+      `${label}必须是数组`
+    );
+  }
   return raw.map((item) => {
     const normalized = sanitizer(item);
     if (!normalized) {
@@ -129,29 +166,116 @@ function normalizeEntityList(raw, sanitizer, label) {
   });
 }
 
+function normalizeLegacyRootParents(nodes, files) {
+  const nodeIds = new Set(nodes.map((node) => node.uuid));
+  const unknownParents = new Set();
+  for (const item of [...nodes, ...files]) {
+    if (item.parentUuid !== ROOT_PARENT_UUID && !nodeIds.has(item.parentUuid)) {
+      unknownParents.add(item.parentUuid);
+    }
+  }
+  if (unknownParents.size > 1) {
+    throw new CuratedLibrarySyncError(
+      ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+      '存在多个未知根父级'
+    );
+  }
+  const legacyRoot = [...unknownParents][0];
+  if (!legacyRoot) return;
+  for (const item of [...nodes, ...files]) {
+    if (item.parentUuid === legacyRoot) item.parentUuid = ROOT_PARENT_UUID;
+  }
+}
+
+function normalizeTombstones(raw) {
+  if (!Array.isArray(raw)) {
+    throw new CuratedLibrarySyncError(
+      ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+      'tombstones必须是数组'
+    );
+  }
+  return raw.map((item) => {
+    const kind = item?.kind === 'file' || item?.kind === 'node' ? item.kind : '';
+    const id = String(item?.id || '').trim().toLowerCase();
+    const revision = Number(item?.revision);
+    const deletedAtMs = Number(item?.deletedAtMs);
+    if (
+      !kind ||
+      !isUuid(id) ||
+      (kind === 'node' && id === ROOT_PARENT_UUID) ||
+      !Number.isSafeInteger(revision) ||
+      revision <= 0 ||
+      !Number.isSafeInteger(deletedAtMs) ||
+      deletedAtMs <= 0
+    ) {
+      throw new CuratedLibrarySyncError(
+        ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+        'tombstones包含无效实体'
+      );
+    }
+    return { kind, id, revision, deletedAtMs };
+  });
+}
+
 function validateEntityTopology(nodes, files) {
-  const rootParent = '00000000-0000-4000-8000-000000000000';
   const nodeIds = new Set();
+  const nodeById = new Map();
   for (const node of nodes) {
     if (nodeIds.has(node.uuid)) {
       throw new CuratedLibrarySyncError(ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT, '节点 ID 重复');
     }
     nodeIds.add(node.uuid);
+    nodeById.set(node.uuid, node);
   }
   for (const node of nodes) {
-    if (node.parentUuid !== rootParent && !nodeIds.has(node.parentUuid)) {
+    const seen = new Set([node.uuid]);
+    let parentUuid = node.parentUuid;
+    while (parentUuid !== ROOT_PARENT_UUID) {
+      if (seen.has(parentUuid)) {
+        throw new CuratedLibrarySyncError(
+          ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+          '节点层级存在循环'
+        );
+      }
+      seen.add(parentUuid);
+      const parent = nodeById.get(parentUuid);
+      if (!parent) break;
+      parentUuid = parent.parentUuid;
+    }
+  }
+  for (const node of nodes) {
+    if (node.parentUuid !== ROOT_PARENT_UUID && !nodeIds.has(node.parentUuid)) {
       throw new CuratedLibrarySyncError(ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT, '节点父级不存在');
     }
   }
   const fileIds = new Set();
+  const occupiedNames = new Set();
+  for (const node of nodes) {
+    const key = `${node.parentUuid}\u0000${node.name.toLocaleLowerCase('en-US')}`;
+    if (occupiedNames.has(key)) {
+      throw new CuratedLibrarySyncError(
+        ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+        '同一父级存在重名节点或文件'
+      );
+    }
+    occupiedNames.add(key);
+  }
   for (const file of files) {
     if (fileIds.has(file.fileId)) {
       throw new CuratedLibrarySyncError(ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT, '文件 ID 重复');
     }
     fileIds.add(file.fileId);
-    if (file.parentUuid !== rootParent && !nodeIds.has(file.parentUuid)) {
+    if (file.parentUuid !== ROOT_PARENT_UUID && !nodeIds.has(file.parentUuid)) {
       throw new CuratedLibrarySyncError(ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT, '文件父级不存在');
     }
+    const key = `${file.parentUuid}\u0000${file.fileName.toLocaleLowerCase('en-US')}`;
+    if (occupiedNames.has(key)) {
+      throw new CuratedLibrarySyncError(
+        ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+        '同一父级存在重名节点或文件'
+      );
+    }
+    occupiedNames.add(key);
   }
 }
 
@@ -175,9 +299,14 @@ function validateOps(ops) {
   }
 }
 
-async function assertSnapshotBlobsReady(files) {
+async function assertSnapshotBlobsReady(userKey, files) {
   for (const file of files || []) {
-    if (!(await blobStore.blobExists(file.sha256))) {
+    const ref = await UserCuratedLibraryBlob.findOne({
+      userKey,
+      sha256: file.sha256,
+      ready: true
+    }).lean();
+    if (!ref || !(await blobStore.verifyBlob(file.sha256))) {
       throw new CuratedLibrarySyncError(
         ERROR_CODES.CURATED_LIBRARY_BLOB_NOT_FOUND,
         `文件 Blob 不存在: ${file.fileId}`,
@@ -255,7 +384,7 @@ function applyOp(snapshot, op, nextRevision) {
     return;
   }
   if (type === 'deleteNode') {
-    const uuid = String(op.uuid || '').trim();
+    const uuid = String(op.uuid || '').trim().toLowerCase();
     if (!isUuid(uuid)) return;
     snapshot.nodes = snapshot.nodes.filter((item) => item.uuid !== uuid);
     snapshot.tombstones = snapshot.tombstones.filter(
@@ -287,7 +416,7 @@ function applyOp(snapshot, op, nextRevision) {
     return;
   }
   if (type === 'deleteFile') {
-    const fileId = String(op.fileId || '').trim();
+    const fileId = String(op.fileId || '').trim().toLowerCase();
     if (!isUuid(fileId)) return;
     snapshot.files = snapshot.files.filter((item) => item.fileId !== fileId);
     snapshot.tombstones = snapshot.tombstones.filter(
@@ -377,8 +506,9 @@ async function commitSnapshot(userKey, payload) {
   let snapshot = await UserCuratedLibrarySnapshot.getOrCreate(userKey);
   const nodes = normalizeEntityList(payload.nodes, sanitizeNode, 'nodes');
   const files = normalizeEntityList(payload.files, sanitizeFile, 'files');
+  normalizeLegacyRootParents(nodes, files);
   validateEntityTopology(nodes, files);
-  await assertSnapshotBlobsReady(files);
+  await assertSnapshotBlobsReady(userKey, files);
   if (payload.replaceExisting === true && snapshot.snapshotReady) {
     const nextRevision = (snapshot.revision || 0) + 1
     stampRevision({ nodes, files }, nextRevision)
@@ -496,7 +626,7 @@ async function pullSnapshot(userKey, sinceRevision) {
   const tombstones = snapshot.tombstones || [];
   const canDiff =
     snapshot.snapshotReady === true &&
-    Number.isFinite(since) &&
+    Number.isSafeInteger(since) &&
     since > 0 &&
     since <= current &&
     nodes.every(entityHasRevision) &&
@@ -545,14 +675,15 @@ async function pushOps(userKey, payload) {
   if (ops.length === 0) return toPublicSnapshot(snapshot);
   const nextRevision = (snapshot.revision || 0) + 1;
   const next = {
-    nodes: [...(snapshot.nodes || [])],
-    files: [...(snapshot.files || [])],
-    tombstones: [...(snapshot.tombstones || [])],
+    nodes: normalizeEntityList(snapshot.nodes || [], sanitizeNode, 'stored nodes'),
+    files: normalizeEntityList(snapshot.files || [], sanitizeFile, 'stored files'),
+    tombstones: normalizeTombstones(snapshot.tombstones),
     revision: snapshot.revision
   };
+  normalizeLegacyRootParents(next.nodes, next.files);
   for (const op of ops) applyOp(next, op, nextRevision);
   validateEntityTopology(next.nodes, next.files);
-  await assertSnapshotBlobsReady(next.files);
+  await assertSnapshotBlobsReady(userKey, next.files);
   const saved = await UserCuratedLibrarySnapshot.findOneAndUpdate(
     { userKey, snapshotReady: true, revision: snapshot.revision },
     {
@@ -592,7 +723,7 @@ async function beginBlob(userKey, sha256, size) {
     throw new CuratedLibrarySyncError(ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT, 'sha256 无效');
   }
   const numericSize = Number(size);
-  if (!Number.isFinite(numericSize) || numericSize < 0) {
+  if (!Number.isSafeInteger(numericSize) || numericSize < 0) {
     throw new CuratedLibrarySyncError(ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT, 'size 无效');
   }
   if (numericSize === 0) {
@@ -601,7 +732,36 @@ async function beginBlob(userKey, sha256, size) {
     return { needed: false, uploadedBytes: 0, chunkSize: CURATED_LIBRARY_SYNC.CHUNK_SIZE_BYTES };
   }
   const chunkSize = CURATED_LIBRARY_SYNC.CHUNK_SIZE_BYTES;
-  const uploadedBytes = await blobStore.getUploadedBytes(hex);
+  const existingRef = await UserCuratedLibraryBlob.findOne({ userKey, sha256: hex }).lean();
+  const used = await sumReservedBlobBytes(userKey);
+  const previousReserved = Number(existingRef?.size) || 0;
+  if (used - previousReserved + numericSize > LIMITS.DEFAULT_MAX_CURATED_BLOB_BYTES_PER_USER) {
+    throw new CuratedLibrarySyncError(
+      ERROR_CODES.CURATED_LIBRARY_QUOTA_EXCEEDED,
+      '精选库云端容量超出配额',
+      400
+    );
+  }
+  let uploadedBytes = await blobStore.getUploadedBytes(hex);
+  if (uploadedBytes > numericSize) {
+    await blobStore.unlinkBlobIfOrphan(hex, false);
+    uploadedBytes = 0;
+  } else if (uploadedBytes === numericSize && !(await blobStore.blobExists(hex))) {
+    try {
+      await blobStore.promotePartFile(hex, numericSize);
+      await upsertBlobRef(userKey, hex, numericSize, true);
+      return { needed: false, uploadedBytes: numericSize, chunkSize };
+    } catch (error) {
+      if (error?.code === 'HASH_MISMATCH') {
+        await blobStore.unlinkBlobIfOrphan(hex, false);
+        uploadedBytes = 0;
+      } else if (error?.code === 'ENOENT') {
+        uploadedBytes = await blobStore.getUploadedBytes(hex);
+      } else {
+        throw error;
+      }
+    }
+  }
   if (await blobStore.blobExists(hex)) {
     const stat = await blobStore.statBlob(hex);
     if (Number(stat.size) !== numericSize) {
@@ -611,16 +771,13 @@ async function beginBlob(userKey, sha256, size) {
         409
       );
     }
-    await upsertBlobRef(userKey, hex, numericSize, true);
-    return { needed: false, uploadedBytes, chunkSize };
-  }
-  const used = await sumReservedBlobBytes(userKey);
-  if (used + numericSize > LIMITS.DEFAULT_MAX_CURATED_BLOB_BYTES_PER_USER) {
-    throw new CuratedLibrarySyncError(
-      ERROR_CODES.CURATED_LIBRARY_QUOTA_EXCEEDED,
-      '精选库云端容量超出配额',
-      400
-    );
+    if (!(await blobStore.verifyBlob(hex))) {
+      await blobStore.unlinkBlobIfOrphan(hex, false);
+      uploadedBytes = 0;
+    } else {
+      await upsertBlobRef(userKey, hex, numericSize, true);
+      return { needed: false, uploadedBytes, chunkSize };
+    }
   }
   await upsertBlobRef(userKey, hex, numericSize, false);
   return { needed: true, uploadedBytes, chunkSize };
@@ -631,8 +788,25 @@ async function appendBlobChunk(userKey, sha256, size, start, readable) {
   if (!isSha(hex)) {
     throw new CuratedLibrarySyncError(ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT, 'sha256 无效');
   }
+  const numericSize = Number(size);
+  const numericStart = Number(start);
+  const ref = await UserCuratedLibraryBlob.findOne({ userKey, sha256: hex }).lean();
+  if (
+    !ref ||
+    !Number.isSafeInteger(numericSize) ||
+    numericSize <= 0 ||
+    !Number.isSafeInteger(numericStart) ||
+    numericStart < 0 ||
+    Number(ref.size) !== numericSize
+  ) {
+    throw new CuratedLibrarySyncError(
+      ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+      'Blob 上传会话不存在或大小不匹配',
+      409
+    );
+  }
   try {
-    const result = await blobStore.appendBlobChunk(hex, size, start, readable);
+    const result = await blobStore.appendBlobChunk(hex, numericSize, numericStart, readable);
     if (result.ready) {
       await upsertBlobRef(userKey, hex, result.uploadedBytes, true);
     }
@@ -653,7 +827,22 @@ async function appendBlobChunk(userKey, sha256, size, start, readable) {
 
 async function completeBlob(userKey, sha256, size, readable) {
   const hex = String(sha256 || '').trim().toLowerCase();
-  const result = await blobStore.writeBlobFromStream(hex, size, readable);
+  const numericSize = Number(size);
+  if (!isSha(hex) || !Number.isSafeInteger(numericSize) || numericSize < 0) {
+    throw new CuratedLibrarySyncError(
+      ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+      'Blob 参数无效'
+    );
+  }
+  const ref = await UserCuratedLibraryBlob.findOne({ userKey, sha256: hex }).lean();
+  if (!ref || Number(ref.size) !== numericSize) {
+    throw new CuratedLibrarySyncError(
+      ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+      'Blob 上传会话不存在或大小不匹配',
+      409
+    );
+  }
+  const result = await blobStore.writeBlobFromStream(hex, numericSize, readable);
   await upsertBlobRef(userKey, hex, result.size, true);
   return { ready: true, size: result.size };
 }
@@ -705,15 +894,26 @@ async function deleteUserCuratedLibrary(userKey) {
 
 module.exports = {
   CuratedLibrarySyncError,
-  getStatus,
-  beginFirstSnapshot,
-  commitSnapshot,
+  getStatus: (userKey) => withUserMutationLock(userKey, () => getStatus(userKey)),
+  beginFirstSnapshot: (userKey) => withUserMutationLock(userKey, () => beginFirstSnapshot(userKey)),
+  commitSnapshot: (userKey, payload) =>
+    withUserMutationLock(userKey, () => commitSnapshot(userKey, payload)),
   pullSnapshot,
-  pushOps,
-  beginBlob,
-  appendBlobChunk,
-  completeBlob,
+  pushOps: (userKey, payload) => withUserMutationLock(userKey, () => pushOps(userKey, payload)),
+  beginBlob: (userKey, sha256, size) =>
+    withUserMutationLock(userKey, () => beginBlob(userKey, sha256, size)),
+  appendBlobChunk: (userKey, sha256, size, start, readable) =>
+    withUserMutationLock(userKey, () => appendBlobChunk(userKey, sha256, size, start, readable)),
+  completeBlob: (userKey, sha256, size, readable) =>
+    withUserMutationLock(userKey, () => completeBlob(userKey, sha256, size, readable)),
   assertBlobReadable,
-  deleteUserCuratedLibrary,
-  blobStore
+  deleteUserCuratedLibrary: (userKey) =>
+    withUserMutationLock(userKey, () => deleteUserCuratedLibrary(userKey)),
+  blobStore,
+  __test: {
+    normalizeLegacyRootParents,
+    validateEntityTopology,
+    sanitizeNode,
+    sanitizeFile
+  }
 };

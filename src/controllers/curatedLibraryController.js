@@ -21,18 +21,25 @@ function respondError(res, error) {
   throw error;
 }
 
-function parseContentRange(header, fallbackTotal) {
+function parseContentRange(header) {
   const raw = String(header || '').trim();
   const match = raw.match(/^bytes\s+(\d+)-(\d+)\/(\d+|\*)$/i);
-  if (!match) {
-    return {
-      start: 0,
-      total: Number(fallbackTotal) || 0
-    };
-  }
+  if (!match || match[3] === '*') return null;
+  const start = Number(match[1]);
+  const end = Number(match[2]);
+  const total = Number(match[3]);
+  if (
+    !Number.isSafeInteger(start) ||
+    !Number.isSafeInteger(end) ||
+    !Number.isSafeInteger(total) ||
+    start < 0 ||
+    end < start ||
+    end >= total
+  ) return null;
   return {
-    start: Number(match[1]),
-    total: match[3] === '*' ? Number(fallbackTotal) || 0 : Number(match[3])
+    start,
+    end,
+    total
   };
 }
 
@@ -108,11 +115,26 @@ class CuratedLibraryController {
       const userKey = req.userKey || req.query.userKey;
       const sha256 = req.params.sha256;
       const size = Number(req.query.size || 0);
-      const range = parseContentRange(req.headers['content-range'], size);
+      const range = parseContentRange(req.headers['content-range']);
+      const contentLength = Number(req.headers['content-length']);
+      if (
+        !range ||
+        !Number.isSafeInteger(size) ||
+        size <= 0 ||
+        range.total !== size ||
+        !Number.isSafeInteger(contentLength) ||
+        contentLength !== range.end - range.start + 1
+      ) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          error: ERROR_CODES.INVALID_CURATED_LIBRARY_SNAPSHOT,
+          message: 'Blob 分片范围或长度无效'
+        });
+      }
       const data = await curatedLibrarySyncService.appendBlobChunk(
         userKey,
         sha256,
-        range.total || size,
+        range.total,
         range.start,
         req
       );
@@ -222,3 +244,4 @@ class CuratedLibraryController {
 }
 
 module.exports = CuratedLibraryController;
+module.exports.parseContentRange = parseContentRange;

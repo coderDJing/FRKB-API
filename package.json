@@ -8,6 +8,7 @@
 		"dev": "nodemon server.js",
 		"admin": "node cli/admin.js",
 		"setup": "node scripts/setup.js",
+		"test": "node --test test/*.test.js",
 		"lint": "eslint src/ cli/ --ext .js",
 		"logs": "tail -f logs/app.log"
 	},
